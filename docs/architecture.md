@@ -4,42 +4,62 @@
 
 AnyReach is born from a simple observation: web-access proved that **the best browser tool for AI agents is the user's own browser**. But it left too much work to the LLM — every site visit requires the agent to write custom JS, explore DOM structures, and handle virtualized rendering from scratch. Tokens burn, results vary.
 
-AnyReach keeps the core insight (connect to the user's daily Chrome via CDP, share login state, operate in background tabs) and adds one layer: **site adapters** — executable knowledge that replaces LLM-driven DOM exploration with deterministic extraction code.
+AnyReach keeps the core insight (connect to the user's daily Chrome via CDP, share login state, operate in background tabs) and adds two layers: **site adapters** (executable extraction code) and **prompt hints** (site-specific knowledge for the LLM), backed by a **remote registry** for on-demand download.
 
 ```
-┌─────────────────────────────────────────────────┐
-│                   AI Agent                       │
-│         (Claude Code / Codex / OpenClaw)         │
-├─────────────────────────────────────────────────┤
-│                  SKILL.md                        │
-│      Browsing philosophy + tool selection        │
-├──────────────┬──────────────────────────────────┤
-│ Adapter      │        CDP Proxy                  │
-│ Runner       │     (HTTP API server)             │
-│              │                                   │
-│  ┌────────┐  │  /new /eval /click /scroll ...    │
-│  │feishu  │  │  /extractText /fill /waitFor      │
-│  │  .mjs  │──│  /setCookie /getCookies           │
-│  └────────┘  │                                   │
-│  ┌────────┐  │         WebSocket                 │
-│  │ x.mjs  │  │            │                      │
-│  └────────┘  │            ▼                      │
-│     ...      │     User's Chrome                 │
-│              │   (background tabs)               │
-└──────────────┴──────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                     AI Agent                          │
+│           (Claude Code / Codex / OpenClaw)            │
+├──────────────────────────────────────────────────────┤
+│                    SKILL.md                           │
+│        Browsing philosophy + tool selection           │
+├───────────────┬──────────────────────────────────────┤
+│ Adapter       │          CDP Proxy                    │
+│ Runner        │       (HTTP API server)               │
+│               │                                      │
+│ ┌──────────┐  │  /new /eval /click /scroll ...       │
+│ │feishu.mjs│  │  /extractText /fill /waitFor         │
+│ └──────────┘  │  /setCookie /getCookies /preScript   │
+│ ┌──────────┐  │                                      │
+│ │ scys.mjs │  │          WebSocket                   │
+│ └──────────┘  │             │                        │
+│ ┌──────────┐  │             ▼                        │
+│ │  xhs.mjs │  │       User's Chrome                  │
+│ └──────────┘  │     (background tabs)                │
+│ ┌──────────┐  │                                      │
+│ │  xhs.md  │  │  registry.json (remote index)        │
+│ └──────────┘  │                                      │
+│ ┌──────────┐  │                                      │
+│ │_utils.mjs│  │                                      │
+│ └──────────┘  │                                      │
+└───────────────┴──────────────────────────────────────┘
 ```
 
-### Three-layer design
+### Four-layer design
 
-**Layer 1 — Strategy (SKILL.md)**: Tells the agent *how to think* about web tasks. Tool selection matrix, browsing philosophy, failure handling. No site-specific logic. ~127 lines.
+**Layer 1 — Strategy (SKILL.md)**: Tells the agent *how to think* about web tasks. Tool selection matrix, browsing philosophy, failure handling. ~136 lines, no site-specific logic.
 
-**Layer 2 — Infrastructure (CDP Proxy)**: Generic browser automation over HTTP. Any agent that can `curl` can use it. 19 endpoints, zero site-specific code.
+**Layer 2 — Infrastructure (CDP Proxy)**: Generic browser automation over HTTP. 20 endpoints, zero site-specific code. Any agent that can `curl` can use it.
 
-**Layer 3 — Knowledge (Site Adapters)**: Per-domain extraction logic. When an adapter exists, the agent skips LLM exploration and gets structured content in one call. When it doesn't, the agent falls back to Layer 2 with raw eval/click/scroll.
+**Layer 3 — Knowledge (Site Adapters + Hints)**: Per-domain extraction logic. Code adapters (`.mjs`) provide deterministic extraction. Prompt hints (`.md`) provide site patterns and pitfalls for LLM-guided exploration. Shared utilities (`_utils.mjs`) eliminate duplication.
+
+**Layer 4 — Distribution (Remote Registry)**: `registry.json` indexes available adapters. The runner auto-downloads missing adapters on first use.
+
+### Resolution order
+
+```
+Agent receives URL
+  ├─ 1. Local .mjs adapter?  →  run adapter  →  structured content
+  ├─ 2. Local .md hint?      →  return hint  →  LLM uses CDP with guidance
+  ├─ 3. Remote registry?     →  download + run adapter
+  └─ 4. None                 →  generic CDP mode (eval/click/scroll)
+```
 
 ## CDP Proxy
 
-A Node.js HTTP server that bridges `curl` commands to Chrome DevTools Protocol over WebSocket. Runs on `localhost:3456` as a persistent background process.
+Node.js HTTP server bridging `curl` commands to Chrome DevTools Protocol over WebSocket. Runs on `localhost:3456` as a persistent detached process.
+
+**Important**: The proxy is a long-running process. After code changes to `cdp-proxy.mjs`, restart with `pkill -f cdp-proxy.mjs && node scripts/check-deps.mjs`.
 
 ### Connection flow
 
@@ -57,9 +77,9 @@ check-deps.mjs
 
 ### Anti-detection
 
-Pages can detect automation by probing the Chrome debug port (`fetch('http://127.0.0.1:9222')`). The proxy intercepts these requests via `Fetch.requestPaused` and returns `ConnectionRefused`, making the debug port invisible to page JavaScript.
+Pages can detect automation by probing the Chrome debug port (`fetch('http://127.0.0.1:9222')`). The proxy intercepts these via `Fetch.requestPaused` and returns `ConnectionRefused`, making the debug port invisible to page JavaScript.
 
-### Endpoints
+### Endpoints (20 total)
 
 #### Tab management
 
@@ -93,7 +113,7 @@ Pages can detect automation by probing the Chrome debug port (`fetch('http://127
 
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
-| `/extractText?target=` | POST | `{ selector, scroll }` | Auto-scroll container, then walk DOM to extract visible text. Returns `{ text, length }` |
+| `/extractText?target=` | POST | `{ selector, scroll }` | Auto-scroll container, then walk DOM to extract visible text |
 | `/screenshot?target=&file=` | GET | — | Capture page screenshot. Save to file or return binary |
 | `/waitFor?target=&selector=&timeout=` | GET | — | MutationObserver-based wait for element. Returns 408 on timeout |
 
@@ -104,49 +124,68 @@ Pages can detect automation by probing the Chrome debug port (`fetch('http://127
 | `/setCookie?target=` | POST | Cookie JSON | Inject cookie via `Network.setCookie`. Supports HttpOnly |
 | `/getCookies?target=&domain=` | GET | — | Get cookies, optionally filtered by domain |
 
-#### Adapter dispatch
+#### Advanced
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/adapter?url=` | POST | Match URL to a site adapter and run extraction. Returns structured content or 404 if no adapter |
+| Endpoint | Method | Body | Description |
+|----------|--------|------|-------------|
+| `/preScript?target=` | POST | JS code | Inject script via `Page.addScriptToEvaluateOnNewDocument`. Runs before page JS on every navigation. Used for intercepting MediaSource, autoplay, etc. |
+| `/adapter?url=` | POST | — | Match URL to site adapter and run extraction. Auto-downloads from registry if needed. Returns structured content or 404 |
 
 ### Session management
 
-Each tab is identified by `targetId`. The proxy maintains a `targetId → sessionId` mapping via `Target.attachToTarget`. Sessions are created lazily on first interaction with a tab and cleaned up on close.
+Each tab is identified by `targetId`. The proxy maintains a `targetId → sessionId` mapping via `Target.attachToTarget`. Sessions are created lazily on first interaction and cleaned up on close.
 
 Multiple agents (or sub-agents) can operate different tabs concurrently through the same proxy — each uses its own targetId, no contention.
 
 ## Site Adapter System
 
-### Interface
+### Code adapters (.mjs)
 
-Every adapter is a single `.mjs` file in `adapters/` exporting a default object:
+Every adapter exports a default object:
 
 ```javascript
+import { sleep, scrollToLoad, downloadMedia } from './_utils.mjs';
+
 export default {
-  name: 'example',           // Adapter identifier
-  domains: ['example.com'],  // Matched against URL hostname
-  description: '...',        // Human-readable description
+  name: 'example',
+  domains: ['example.com'],
+  description: '...',
 
-  // Classify page type from URL (optional)
-  detect(url) {
-    if (url.includes('/article/')) return 'article';
-    return 'default';
-  },
-
-  // Extract content. Receives ProxyClient + targetId for an already-loaded tab
-  async extract(proxy, targetId, ctx) {
-    // ctx: { url, pageType }
-    const title = await proxy.eval(targetId, 'document.title');
-    const { text } = await proxy.extractText(targetId, { selector: '.content' });
-    return { title, content: text, format: 'text' };
-  },
+  detect(url) { ... },                        // classify page type
+  async extract(proxy, targetId, ctx) { ... }, // extract content
 };
 ```
 
+### Prompt hints (.md)
+
+For sites where a full code adapter isn't worth the maintenance cost:
+
+```markdown
+---
+domain: example.com
+aliases: [ex, Example]
+updated: 2026-04-06
+---
+## Platform characteristics
+...
+## Effective patterns
+...
+## Known pitfalls
+...
+```
+
+### Shared utilities (_utils.mjs)
+
+| Function | Description |
+|----------|-------------|
+| `sleep(ms)` | Promise-based delay |
+| `downloadFile(url, destPath)` | Download URL to local file (skips blob:) |
+| `downloadMedia(mediaObj, destDir)` | Batch download images + videos to directory |
+| `scrollToLoad(proxy, targetId, opts)` | Scroll-to-load pattern with card extraction polling |
+
 ### ProxyClient
 
-Adapters receive a `ProxyClient` instance that wraps CDP Proxy HTTP calls:
+Adapters receive a `ProxyClient` instance wrapping CDP Proxy HTTP calls:
 
 ```
 proxy.newTab(url)                    → targetId
@@ -158,59 +197,64 @@ proxy.scroll(targetId, { direction })
 proxy.screenshot(targetId, filePath)
 proxy.extractText(targetId, opts)    → { text, length }
 proxy.fill(targetId, fields)
-proxy.waitFor(targetId, selector, timeout)
+proxy.waitFor(targetId, sel, ms)
 proxy.navigate(targetId, url)
 proxy.info(targetId)                 → { title, url, ready }
 proxy.setCookie(targetId, cookie)
 proxy.getCookies(targetId, domain)
+proxy.preScript(targetId, js)        → { identifier }
 ```
 
 ### Adapter Runner
 
-`adapter-runner.mjs` serves as both CLI tool and importable module:
+CLI tool and importable module:
 
 ```bash
-# CLI usage
-node adapter-runner.mjs list              # List installed adapters
-node adapter-runner.mjs check <url>       # Check if URL has an adapter
-node adapter-runner.mjs run <url>         # Run adapter, output JSON
-
-# Programmatic usage (from CDP Proxy /adapter endpoint)
-import { runAdapter } from './adapter-runner.mjs';
-const result = await runAdapter(url, { proxyPort: 3456 });
+node adapter-runner.mjs list              # List local adapters and hints
+node adapter-runner.mjs check <url>       # Check match level (adapter/hint/remote/none)
+node adapter-runner.mjs run <url>         # Run adapter (auto-downloads if remote)
+node adapter-runner.mjs hint <url>        # Get .md hint content
+node adapter-runner.mjs download <url>    # Pre-fetch remote adapter
 ```
 
-The runner handles the full lifecycle: load adapter → create tab → call extract → close tab → return result.
+### Remote registry
 
-### Adapter vs generic mode
+`registry.json` at repo root indexes available adapters:
 
+```json
+{
+  "version": 1,
+  "adapters": {
+    "feishu": {
+      "domains": ["feishu.cn"],
+      "files": ["adapters/feishu.mjs"],
+      "updated": "2026-04-06"
+    }
+  },
+  "shared": ["adapters/_utils.mjs"]
+}
 ```
-Agent receives URL
-  │
-  ├── adapter-runner check URL
-  │     ├── has_adapter: true  →  adapter-runner run URL  →  structured content
-  │     └── has_adapter: false →  generic CDP mode (eval/click/scroll by LLM)
-  │
-  └── (SKILL.md guides this decision)
-```
 
-When an adapter exists: one command, deterministic result, minimal tokens.
-When it doesn't: the agent uses CDP Proxy endpoints directly, writing JS on the fly — same capability as web-access, just with more convenience endpoints.
+When `adapter-runner` finds no local match, it fetches the registry from GitHub, checks for a domain match, and downloads the adapter files + shared dependencies to `adapters/`. Subsequent calls use the local copy.
+
+### Installed adapters
+
+| Adapter | Domains | Capabilities |
+|---------|---------|-------------|
+| **feishu** | feishu.cn, larksuite.com | Wiki/docx extraction via `window.DATA` — bypasses canvas virtualization |
+| **xiaohongshu** | xiaohongshu.com, xhslink.com | Notes (image+text, video+text), profiles, feeds. Scroll-to-load, batch extraction |
+| **scys** | scys.com | Articles, 风向标 (with bid filter), 航海 projects, course manuals (multi-chapter) |
 
 ## SKILL.md Design
 
-The agent-facing prompt follows web-access's philosophy: **teach the agent how to think, not what to do**.
+The agent-facing prompt teaches thinking strategy, not procedures:
 
-Structure:
-1. **Prerequisites** — environment check command + user notice
-2. **Browsing philosophy** — four-step loop: define success → choose entry point → validate each step → confirm completion
-3. **Tool selection** — when to use WebSearch vs WebFetch vs Jina vs curl vs CDP
-4. **CDP Proxy API** — endpoint reference (agent needs this to construct curl commands)
-5. **Adapter system** — three commands: check / run / list
-6. **Parallel dispatch** — sub-agent guidelines (describe goals, not methods)
-7. **Technical facts** — things the LLM might not recall in context (virtual rendering, lazy loading, Shadow DOM boundaries)
+1. **Prerequisites** — environment check + user notice
+2. **Browsing philosophy** — four-step loop: define success → choose entry → validate → confirm
+3. **Tool selection** — WebSearch / WebFetch / Jina / curl / CDP decision matrix
+4. **CDP Proxy API** — endpoint reference for constructing curl commands
+5. **Site knowledge** — four-tier check / run / hint / download commands
+6. **Parallel dispatch** — sub-agent guidelines (goals not methods)
+7. **Technical facts** — virtual rendering, lazy loading, Shadow DOM boundaries
 
-What's NOT in SKILL.md:
-- No site-specific instructions (that's what adapters are for)
-- No step-by-step workflows (the agent decides its own path)
-- No redundant API docs (detailed reference is in `references/cdp-api.md`, loaded on demand)
+What's NOT in SKILL.md: site-specific instructions, step-by-step workflows, redundant API docs.

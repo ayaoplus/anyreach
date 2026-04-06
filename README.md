@@ -171,8 +171,7 @@ adapters/
   _utils.mjs          Shared utilities (sleep, downloadFile, scrollToLoad)
   _template.mjs       Adapter template
   feishu.mjs          Feishu docs (window.DATA extraction)
-  xiaohongshu.mjs     Xiaohongshu notes, profiles, feeds
-  xiaohongshu.md      Xiaohongshu prompt hint (patterns + pitfalls)
+  xiaohongshu.mjs     Xiaohongshu notes, profiles, feeds (platform notes in header)
   scys.mjs            生财有术 articles, opportunities, courses
 ```
 
