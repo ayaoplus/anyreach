@@ -327,7 +327,10 @@ export async function runAdapter(url, opts = {}) {
   try {
     const pageType = adapter.detect ? adapter.detect(url) : 'default';
     if (adapter.extract) {
-      const result = await adapter.extract(proxy, targetId, { url, pageType });
+      // 传递所有 opts 参数到 ctx（mode、bidOnly、limit 等）
+      const ctx = { url, pageType, ...opts };
+      delete ctx.proxyPort; // proxyPort 不需要传给 adapter
+      const result = await adapter.extract(proxy, targetId, ctx);
       return { adapter: adapter.name, pageType, ...result };
     }
     return { adapter: adapter.name, pageType, error: 'adapter has no extract method' };

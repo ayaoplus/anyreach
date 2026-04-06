@@ -56,22 +56,51 @@ const EXTRACT_ARTICLE_JS = `(() => {
   return { title, author, date, text, imgs, externalLinks: links, tags, interactionCounts: counts };
 })()`;
 
-// --- 风向标列表卡片 ---
+// --- 风向标列表卡片（预览模式） ---
 const EXTRACT_OPP_CARDS_JS = `(() => {
   const cards = document.querySelectorAll('.post-item');
   return Array.from(cards).map(c => {
-    const nameEl = c.querySelector('.name-identity');
-    const author = nameEl?.innerText?.trim() || '';
-    const dateEl = c.querySelector('[class*=time]');
-    const date = dateEl?.innerText?.trim() || '';
-    const isBid = c.innerText?.includes('中标') || !!c.querySelector('[class*=bid]');
-    const text = c.innerText?.trim() || '';
-    // extract first line as title (skip author/date lines)
-    const lines = text.split('\\n').map(l => l.trim()).filter(Boolean);
-    const titleIdx = lines.findIndex(l => l.length > 10 && l !== author && !l.match(/^\\d/));
-    const title = titleIdx >= 0 ? lines[titleIdx]?.slice(0,80) : '';
-    const tags = Array.from(c.querySelectorAll('[class*=tag]')).map(t => t.innerText?.trim()).filter(Boolean);
-    return { author, date, title, isBid, tags, preview: text.slice(0,200) };
+    const author = c.querySelector('.name-identity .name')?.innerText?.trim() || '';
+    const date = c.querySelector('.date')?.innerText?.trim() || '';
+    const isBid = !!c.querySelector('.hit-icon');
+    const title = c.querySelector('.post-title')?.innerText?.trim() || '';
+    const category = c.querySelector('.title-line .icon')?.innerText?.trim() || '';
+    const tags = Array.from(c.querySelectorAll('.label-box [class*=tag], .label-box span')).map(t => t.innerText?.trim()).filter(Boolean);
+    const preview = c.querySelector('.content-container')?.innerText?.trim()?.slice(0, 200) || '';
+    return { author, date, title, category, isBid, tags, preview };
+  });
+})()`;
+
+// --- 风向标卡片（归档模式：展开后的完整数据） ---
+const EXTRACT_OPP_CARDS_ARCHIVE_JS = `(() => {
+  const cards = document.querySelectorAll('.post-item');
+  return Array.from(cards).map(c => {
+    const author = c.querySelector('.name-identity .name')?.innerText?.trim() || '';
+    const date = c.querySelector('.date')?.innerText?.trim() || '';
+    const isBid = !!c.querySelector('.hit-icon');
+    const title = c.querySelector('.post-title')?.innerText?.trim() || '';
+    const category = c.querySelector('.title-line .icon')?.innerText?.trim() || '';
+    const tags = Array.from(c.querySelectorAll('.label-box [class*=tag], .label-box span')).map(t => t.innerText?.trim()).filter(Boolean);
+
+    // 完整正文（展开后 .content-container 包含全部内容）
+    const text = c.querySelector('.content-container')?.innerText?.trim() || '';
+
+    // 图片：.image-list 中的 img，取实际 src
+    const images = Array.from(c.querySelectorAll('.image-list img'))
+      .map(i => i.src)
+      .filter(s => s && s.startsWith('http'));
+
+    // AI 提炼
+    const aiSummary = c.querySelector('.ai-summary-container')?.innerText?.replace('智能提炼', '')?.trim() || '';
+
+    // 互动数据
+    const interactionEls = c.querySelectorAll('.interactions .item');
+    const interactions = Array.from(interactionEls).map(el => el.innerText?.trim()).filter(Boolean);
+
+    // 是否还有"展开全文"按钮（未展开标记）
+    const hasExpand = !!c.querySelector('.flex-btn');
+
+    return { author, date, title, category, isBid, tags, text, images, aiSummary, interactions, hasExpand };
   });
 })()`;
 
@@ -90,7 +119,7 @@ const EXTRACT_ACTIVITY_CARDS_JS = `(() => {
   });
 })()`;
 
-// --- 航海手册目录（异步：展开后等待渲染） ---
+// --- 航海手册目录（异步：展开所有折叠的 section） ---
 const EXPAND_ALL_SECTIONS_JS = `(async () => {
   const collapsed = document.querySelectorAll('.vc-section-header:not(.expanded)');
   for (const h of collapsed) {
@@ -100,29 +129,44 @@ const EXPAND_ALL_SECTIONS_JS = `(async () => {
   return collapsed.length;
 })()`;
 
+// 提取课程目录结构
 const EXTRACT_COURSE_TOC_JS = `(() => {
-  const sections = document.querySelectorAll('.catalogue-section');
+  const sections = document.querySelectorAll('.vc-course-catalogue .catalogue-section');
   return Array.from(sections).map(s => {
-    const header = s.querySelector('.vc-section-header')?.innerText?.trim() || '';
-    const chapters = Array.from(s.querySelectorAll('.vc-chapter-item')).map((c, idx) => ({
-      name: c.querySelector('.name')?.innerText?.trim() || c.innerText?.trim()?.split('\\n')[0],
+    const header = s.querySelector('.section-title')?.innerText?.trim()
+      || s.querySelector('.vc-section-header')?.innerText?.trim() || '';
+    const items = s.querySelectorAll('.vc-chapter-item');
+    const chapters = Array.from(items).map((c, idx) => ({
+      name: c.querySelector('.chapter-title')?.innerText?.trim()
+        || c.querySelector('.chapter-content')?.innerText?.trim()?.split('\\n')[0]
+        || c.innerText?.trim()?.split('\\n')[0],
       index: idx,
       active: c.classList.contains('is-active'),
+      meta: c.querySelector('.chapter-meta')?.innerText?.trim() || '',
     }));
     return { header, chapters };
-  });
+  }).filter(s => s.chapters.length > 0);
 })()`;
 
 // --- 航海手册当前章节内容 ---
+// 精确提取 .vc-course-content 下的标题和正文，避免混入侧边栏
 const EXTRACT_COURSE_CONTENT_JS = `(() => {
-  const content = document.querySelector('.content-mt');
-  if (!content) return null;
-  const text = content.innerText?.trim() || '';
-  const imgs = Array.from(content.querySelectorAll('img'))
+  const courseContent = document.querySelector('.vc-course-content');
+  if (!courseContent) {
+    // 回退到 .content-mt
+    const mt = document.querySelector('.content-mt');
+    if (!mt) return null;
+    const text = mt.innerText?.trim() || '';
+    return { text, imgs: [], videos: [], textLength: text.length };
+  }
+  const title = courseContent.querySelector('.content-title')?.innerText?.trim() || '';
+  const docContent = courseContent.querySelector('.feishu-doc-content, .document-container');
+  const text = docContent?.innerText?.trim() || courseContent.innerText?.trim() || '';
+  const imgs = Array.from((docContent || courseContent).querySelectorAll('img'))
     .map(i => i.src).filter(s => s && s.startsWith('http'));
-  const videos = Array.from(content.querySelectorAll('video'))
+  const videos = Array.from((docContent || courseContent).querySelectorAll('video'))
     .map(v => v.src || v.querySelector('source')?.src).filter(Boolean);
-  return { text, imgs, videos, textLength: text.length };
+  return { title, text, imgs, videos, textLength: text.length };
 })()`;
 
 // (downloadFile and downloadMedia imported from _utils.mjs)
@@ -157,7 +201,7 @@ export default {
       case 'course':
         return this._extractCourse(proxy, targetId);
       default:
-        return { error: `unsupported page type: ${pageType}` };
+        return { error: `unsupported page type: ${pageType}`, hint: 'supported types: article, opportunity, activity, course' };
     }
   },
 
@@ -175,7 +219,7 @@ export default {
     await proxy.waitFor(targetId, '.post-item', 10000).catch(() => {});
     await sleep(1000);
 
-    // if bid-only filter requested, click the "中标" tab
+    // 切换到"中标"tab（如果请求了）
     const bidOnly = ctx.url?.includes('filter=bid') || ctx.bidOnly;
     if (bidOnly) {
       await proxy.eval(targetId, `(() => {
@@ -187,10 +231,74 @@ export default {
       await sleep(1500);
     }
 
-    let cards = await scrollToLoad(proxy, targetId, { extractJS: EXTRACT_OPP_CARDS_JS, limit });
-    if (bidOnly) cards = cards.filter(c => c.isBid);
+    // 预览模式：快速抓摘要
+    const mode = ctx.mode || 'list';
+    if (mode === 'list') {
+      let cards = await scrollToLoad(proxy, targetId, { extractJS: EXTRACT_OPP_CARDS_JS, limit });
+      if (bidOnly) cards = cards.filter(c => c.isBid);
+      return { listType: 'opportunity', mode: 'list', bidOnly: !!bidOnly, cards, cardCount: cards.length, format: 'json' };
+    }
 
-    return { listType: 'opportunity', bidOnly: !!bidOnly, cards, cardCount: cards.length, format: 'json' };
+    // 归档模式：滚动加载 → 展开全文 → 提取完整内容+图片
+    return this._extractOpportunityArchive(proxy, targetId, limit, ctx);
+  },
+
+  // --- 风向标归档模式（支持分页+日期过滤） ---
+  async _extractOpportunityArchive(proxy, targetId, limit, ctx) {
+    const bidOnly = ctx.url?.includes('filter=bid') || ctx.bidOnly;
+    const maxPages = ctx.maxPages || 10;
+
+    let allCards = [];
+    let page = 1;
+    let shouldStop = false;
+
+    while (page <= maxPages && allCards.length < limit && !shouldStop) {
+      // 等待当前页卡片加载
+      await proxy.waitFor(targetId, '.post-item', 10000).catch(() => {});
+      await sleep(1000);
+
+      // 提取当前页完整数据（innerText 不受 CSS overflow 裁剪影响，无需展开）
+      let cards = await proxy.eval(targetId, EXTRACT_OPP_CARDS_ARCHIVE_JS);
+      if (!cards || !Array.isArray(cards) || cards.length === 0) break;
+
+      // 过滤中标
+      if (bidOnly) cards = cards.filter(c => c.isBid);
+
+      allCards.push(...cards);
+
+      // 如果已经够了就不翻页了
+      if (allCards.length >= limit) break;
+
+      // 点击下一页
+      const hasNext = await proxy.eval(targetId, `(() => {
+        const nextBtn = document.querySelector('.arco-pagination-item-next:not(.arco-pagination-item-disabled)');
+        if (nextBtn) { nextBtn.click(); return true; }
+        // 回退：找当前 active 页码的下一个兄弟
+        const active = document.querySelector('.arco-pagination-item-active');
+        const next = active?.nextElementSibling;
+        if (next && !next.classList.contains('arco-pagination-item-ellipsis') && next.innerText?.match(/^\\d+$/)) {
+          next.click();
+          return true;
+        }
+        return false;
+      })()`);
+
+      if (!hasNext) break;
+      page++;
+      await sleep(2000);
+    }
+
+    allCards = allCards.slice(0, limit);
+
+    return {
+      listType: 'opportunity',
+      mode: 'archive',
+      bidOnly: !!bidOnly,
+      cards: allCards,
+      cardCount: allCards.length,
+      pagesScanned: page,
+      format: 'json',
+    };
   },
 
   // --- 航海项目列表 ---
@@ -208,54 +316,58 @@ export default {
     await proxy.waitFor(targetId, '.vc-course-sidebar', 10000).catch(() => {});
     await sleep(1000);
 
-    // get course title
+    // 课程标题
     const courseTitle = await proxy.eval(targetId,
       `document.querySelector('.vc-course-info [class*=title], .vc-course-info h2')?.innerText?.trim() || document.title`
     );
 
-    // expand all collapsed sections, then get TOC
+    // 展开所有折叠的 section
     await proxy.eval(targetId, EXPAND_ALL_SECTIONS_JS);
     await sleep(1000);
     const toc = await proxy.eval(targetId, EXTRACT_COURSE_TOC_JS);
 
-    // extract each chapter by clicking through sidebar
-    const chapters = [];
-    if (!toc) return { title: courseTitle, chapters: [], error: 'failed to get TOC' };
+    if (!toc || toc.length === 0) return { title: courseTitle, chapters: [], error: 'failed to get TOC' };
 
+    // 构建章节的全局索引（因为不同 section 下可能有同名章节如 "00. 本章概要"）
+    // 用全局序号点击，避免名称匹配歧义
+    let globalIdx = 0;
+    const chapterPlan = [];
     for (const section of toc) {
       for (const ch of section.chapters) {
-        // click this chapter in sidebar
-        const clicked = await proxy.eval(targetId, `(() => {
-          const items = document.querySelectorAll('.vc-chapter-item');
-          for (const item of items) {
-            const name = item.querySelector('.name')?.innerText?.trim() || item.innerText?.trim()?.split('\\n')[0];
-            if (name === ${JSON.stringify(ch.name)}) {
-              item.click();
-              return true;
-            }
-          }
-          return false;
-        })()`);
-
-        if (!clicked) {
-          chapters.push({ section: section.header, name: ch.name, error: 'chapter not found in sidebar' });
-          continue;
-        }
-
-        // wait for content to update
-        await sleep(1500);
-
-        // extract content
-        const content = await proxy.eval(targetId, EXTRACT_COURSE_CONTENT_JS);
-        chapters.push({
-          section: section.header,
-          name: ch.name,
-          text: content?.text || '',
-          images: content?.imgs || [],
-          videos: content?.videos || [],
-          textLength: content?.textLength || 0,
-        });
+        chapterPlan.push({ section: section.header, name: ch.name, globalIdx, meta: ch.meta });
+        globalIdx++;
       }
+    }
+
+    // 逐章点击提取
+    const chapters = [];
+    for (const plan of chapterPlan) {
+      const clicked = await proxy.eval(targetId, `(() => {
+        const items = document.querySelectorAll('.vc-chapter-item');
+        const target = items[${plan.globalIdx}];
+        if (!target) return false;
+        target.click();
+        return true;
+      })()`);
+
+      if (!clicked) {
+        chapters.push({ section: plan.section, name: plan.name, error: 'chapter not found in sidebar' });
+        continue;
+      }
+
+      // 等待内容区更新
+      await sleep(2000);
+
+      const content = await proxy.eval(targetId, EXTRACT_COURSE_CONTENT_JS);
+      chapters.push({
+        section: plan.section,
+        name: plan.name,
+        meta: plan.meta,
+        text: content?.text || '',
+        images: content?.imgs || [],
+        videos: content?.videos || [],
+        textLength: content?.textLength || 0,
+      });
     }
 
     return {
