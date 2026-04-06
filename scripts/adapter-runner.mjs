@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // AnyReach 站点适配器调度器
-// 根据 URL 匹配适配器，执行提取/交互操作
+// 三层递进：.mjs 代码适配器 → .md prompt 提示 → 通用模式
+//
 // 用法：
-//   node adapter-runner.mjs check <url>    — 检查是否有适配器
-//   node adapter-runner.mjs run <url>      — 运行适配器提取内容
-//   node adapter-runner.mjs list           — 列出已安装适配器
+//   node adapter-runner.mjs check <url>    — 检查匹配层级（adapter/hint/none）
+//   node adapter-runner.mjs run <url>      — 运行代码适配器提取内容
+//   node adapter-runner.mjs hint <url>     — 返回 .md 提示内容
+//   node adapter-runner.mjs list           — 列出所有已安装适配器和提示
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -117,70 +119,124 @@ class ProxyClient {
   }
 }
 
-// --- 适配器加载 ---
+// --- 适配器和提示加载 ---
 
-// 扫描本地适配器目录，返回 { domain, module } 列表
+// 从 hostname 提取匹配用的域名关键词（去掉 www. 等前缀）
+function extractDomain(hostname) {
+  return hostname.replace(/^www\./, '');
+}
+
+// 扫描 .mjs 代码适配器
 async function loadAdapters() {
   const adapters = [];
   if (!fs.existsSync(ADAPTERS_DIR)) return adapters;
-
   for (const file of fs.readdirSync(ADAPTERS_DIR)) {
     if (!file.endsWith('.mjs') || file.startsWith('_')) continue;
     try {
       const mod = await import(path.join(ADAPTERS_DIR, file));
       if (mod.default?.domains) {
-        adapters.push({ file, ...mod.default });
+        adapters.push({ file, type: 'adapter', ...mod.default });
       }
     } catch (e) {
-      console.error(`[AnyReach] 适配器加载失败 ${file}: ${e.message}`);
+      console.error(`[AnyReach] adapter load failed ${file}: ${e.message}`);
     }
   }
   return adapters;
 }
 
-// 根据 URL 匹配适配器
-async function matchAdapter(url) {
-  const hostname = new URL(url).hostname;
+// 扫描 .md prompt 提示文件
+// 格式：frontmatter 中包含 domain 和 aliases，正文为提示内容
+function loadHints() {
+  const hints = [];
+  if (!fs.existsSync(ADAPTERS_DIR)) return hints;
+  for (const file of fs.readdirSync(ADAPTERS_DIR)) {
+    if (!file.endsWith('.md') || file.startsWith('_')) continue;
+    try {
+      const raw = fs.readFileSync(path.join(ADAPTERS_DIR, file), 'utf8');
+      // 解析 frontmatter
+      const fmMatch = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
+      if (!fmMatch) continue;
+      const fm = fmMatch[1];
+      const body = fmMatch[2].trim();
+      // 提取 domain
+      const domainMatch = fm.match(/^domain:\s*(.+)/m);
+      if (!domainMatch) continue;
+      const domain = domainMatch[1].trim();
+      // 提取 aliases
+      const aliasMatch = fm.match(/^aliases:\s*\[([^\]]*)\]/m);
+      const aliases = aliasMatch
+        ? aliasMatch[1].split(',').map(s => s.trim()).filter(Boolean)
+        : [];
+      hints.push({ file, type: 'hint', domain, aliases, body });
+    } catch { /* skip unreadable files */ }
+  }
+  return hints;
+}
+
+// 根据 URL 匹配：先找 .mjs 适配器，再找 .md 提示
+async function matchUrl(url) {
+  const hostname = extractDomain(new URL(url).hostname);
+
+  // 第一层：代码适配器
   const adapters = await loadAdapters();
   for (const adapter of adapters) {
-    for (const domain of adapter.domains) {
-      if (hostname === domain || hostname.endsWith('.' + domain)) {
-        return adapter;
+    for (const d of adapter.domains) {
+      if (hostname === d || hostname.endsWith('.' + d)) {
+        return { level: 'adapter', adapter };
       }
     }
   }
-  return null;
+
+  // 第二层：prompt 提示
+  const hints = loadHints();
+  for (const hint of hints) {
+    const patterns = [hint.domain, ...hint.aliases];
+    for (const p of patterns) {
+      if (hostname === p || hostname.endsWith('.' + p) || hostname.includes(p)) {
+        return { level: 'hint', hint };
+      }
+    }
+  }
+
+  // 第三层：通用模式
+  return { level: 'none' };
 }
 
 // --- 公开 API ---
 
-// 供 CDP Proxy /adapter 端点调用
+// 检查 URL 的匹配层级
+export async function checkUrl(url) {
+  return matchUrl(url);
+}
+
+// 获取 .md 提示内容
+export async function getHint(url) {
+  const match = await matchUrl(url);
+  if (match.level === 'hint') return match.hint.body;
+  return null;
+}
+
+// 运行代码适配器
 export async function runAdapter(url, opts = {}) {
-  const adapter = await matchAdapter(url);
-  if (!adapter) {
+  const match = await matchUrl(url);
+  if (match.level !== 'adapter') {
     const err = new Error('no_adapter');
     err.code = 'NO_ADAPTER';
     throw err;
   }
 
+  const { adapter } = match;
   const proxy = new ProxyClient(opts.proxyPort || PROXY_PORT);
-
-  // 创建 tab
   const targetId = await proxy.newTab(url);
 
   try {
-    // 检测页面类型
     const pageType = adapter.detect ? adapter.detect(url) : 'default';
-
-    // 执行提取
     if (adapter.extract) {
       const result = await adapter.extract(proxy, targetId, { url, pageType });
       return { adapter: adapter.name, pageType, ...result };
     }
-
-    return { adapter: adapter.name, pageType, error: '适配器未定义 extract 方法' };
+    return { adapter: adapter.name, pageType, error: 'adapter has no extract method' };
   } finally {
-    // 清理 tab
     await proxy.close(targetId).catch(() => {});
   }
 }
@@ -191,29 +247,41 @@ async function main() {
 
   if (command === 'list') {
     const adapters = await loadAdapters();
-    if (adapters.length === 0) {
-      console.log('暂无已安装的适配器');
-    } else {
+    const hints = loadHints();
+    if (adapters.length === 0 && hints.length === 0) {
+      console.log('No adapters or hints installed.');
+      return;
+    }
+    if (adapters.length > 0) {
+      console.log('Adapters (.mjs):');
       for (const a of adapters) {
         console.log(`  ${a.name} — ${a.domains.join(', ')} — ${a.description || ''}`);
+      }
+    }
+    if (hints.length > 0) {
+      console.log('Hints (.md):');
+      for (const h of hints) {
+        const aliases = h.aliases.length > 0 ? ` (aliases: ${h.aliases.join(', ')})` : '';
+        console.log(`  ${h.domain}${aliases} — ${h.file}`);
       }
     }
     return;
   }
 
   if (command === 'check') {
-    if (!arg) { console.error('用法: adapter-runner.mjs check <url>'); process.exit(1); }
-    const adapter = await matchAdapter(arg);
-    if (adapter) {
-      console.log(JSON.stringify({ has_adapter: true, name: adapter.name, domains: adapter.domains }));
-    } else {
-      console.log(JSON.stringify({ has_adapter: false }));
-    }
+    if (!arg) { console.error('Usage: adapter-runner.mjs check <url>'); process.exit(1); }
+    const match = await matchUrl(arg);
+    console.log(JSON.stringify(match.level === 'adapter'
+      ? { level: 'adapter', name: match.adapter.name, domains: match.adapter.domains }
+      : match.level === 'hint'
+        ? { level: 'hint', domain: match.hint.domain, file: match.hint.file }
+        : { level: 'none' }
+    ));
     return;
   }
 
   if (command === 'run') {
-    if (!arg) { console.error('用法: adapter-runner.mjs run <url>'); process.exit(1); }
+    if (!arg) { console.error('Usage: adapter-runner.mjs run <url>'); process.exit(1); }
     try {
       const result = await runAdapter(arg);
       console.log(JSON.stringify(result, null, 2));
@@ -221,18 +289,31 @@ async function main() {
       if (e.code === 'NO_ADAPTER') {
         console.log(JSON.stringify({ error: 'no_adapter', url: arg }));
       } else {
-        console.error('错误:', e.message);
+        console.error('Error:', e.message);
         process.exit(1);
       }
     }
     return;
   }
 
+  if (command === 'hint') {
+    if (!arg) { console.error('Usage: adapter-runner.mjs hint <url>'); process.exit(1); }
+    const body = await getHint(arg);
+    if (body) {
+      console.log(body);
+    } else {
+      console.log(JSON.stringify({ hint: null }));
+    }
+    return;
+  }
+
   console.log('AnyReach Adapter Runner');
-  console.log('用法:');
-  console.log('  node adapter-runner.mjs list              列出已安装适配器');
-  console.log('  node adapter-runner.mjs check <url>       检查 URL 是否有适配器');
-  console.log('  node adapter-runner.mjs run <url>         运行适配器提取内容');
+  console.log('');
+  console.log('Usage:');
+  console.log('  node adapter-runner.mjs list              List installed adapters and hints');
+  console.log('  node adapter-runner.mjs check <url>       Check URL match level (adapter/hint/none)');
+  console.log('  node adapter-runner.mjs run <url>         Run code adapter, output JSON');
+  console.log('  node adapter-runner.mjs hint <url>        Get .md hint content for URL');
 }
 
 // 仅在 CLI 直接调用时运行 main
