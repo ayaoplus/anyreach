@@ -98,14 +98,24 @@ async function connect() {
   if (connectingPromise) return connectingPromise;
 
   if (!chromePort) {
-    const found = await discoverChromePort();
-    if (!found) {
-      throw new Error(
-        'Chrome 未开启远程调试。请在 chrome://inspect/#remote-debugging 勾选 "Allow remote debugging"'
-      );
+    // 支持通过环境变量指定 Chrome 调试端口（managed browser mode 使用）
+    if (process.env.CDP_CHROME_PORT) {
+      const envPort = parseInt(process.env.CDP_CHROME_PORT);
+      if (envPort > 0 && envPort < 65536 && await probePort(envPort)) {
+        chromePort = envPort;
+        console.log(`[AnyReach] 使用指定 Chrome 端口: ${chromePort}`);
+      }
     }
-    chromePort = found.port;
-    chromeWsPath = found.wsPath;
+    if (!chromePort) {
+      const found = await discoverChromePort();
+      if (!found) {
+        throw new Error(
+          'Chrome 未开启远程调试。请在 chrome://inspect/#remote-debugging 勾选 "Allow remote debugging"'
+        );
+      }
+      chromePort = found.port;
+      chromeWsPath = found.wsPath;
+    }
   }
 
   const wsUrl = chromeWsPath
@@ -502,7 +512,8 @@ const server = http.createServer(async (req, res) => {
     // body: JSON { method: "Network.enable", params: {} }
     // 可选 query: session=xxx 直接指定 session ID（用于 Worker 等子 target）
     else if (pathname === '/cdp') {
-      const sid = q.session || await ensureSession(q.target);
+      // 支持不传 target 的浏览器级 CDP 命令（如 Storage.getCookies）
+      const sid = q.session || (q.target ? await ensureSession(q.target) : null);
       const cmd = JSON.parse(await readBody(req));
       try {
         const result = await sendCDP(cmd.method, cmd.params || {}, sid);
