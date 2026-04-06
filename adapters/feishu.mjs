@@ -81,6 +81,24 @@ function imgTokenToUrl(token, blockId) {
   return `https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/v2/cover/${token}/?fallback_source=1&height=1280&mount_node_token=${blockId}&mount_point=docx_image`;
 }
 
+// emoji_id 转 unicode emoji
+const EMOJI_MAP = {
+  'thought_balloon': '💭', 'white_check_mark': '✅', 'bulb': '💡',
+  'warning': '⚠️', 'memo': '📝', 'star': '⭐', 'fire': '🔥',
+  'rocket': '🚀', 'pushpin': '📌', 'bell': '🔔', 'link': '🔗',
+  'heart': '❤️', 'thumbsup': '👍', 'eyes': '👀', 'question': '❓',
+  'exclamation': '❗', 'information_source': 'ℹ️', 'x': '❌',
+};
+
+function emojiIdToChar(emojiId, emojiValue) {
+  if (EMOJI_MAP[emojiId]) return EMOJI_MAP[emojiId];
+  // 用 unicode codepoint 回退
+  if (emojiValue) {
+    try { return String.fromCodePoint(parseInt(emojiValue, 16)); } catch { /* ignore */ }
+  }
+  return '';
+}
+
 // 递归遍历 block 树，生成 markdown
 function blocksToMarkdown(allBlocks, rootId) {
   const lines = [];
@@ -88,7 +106,8 @@ function blocksToMarkdown(allBlocks, rootId) {
   let orderedCounter = 1;
   let lastType = '';
 
-  function traverse(blockId) {
+  // quoteDepth 控制 blockquote 嵌套层级
+  function traverse(blockId, quoteDepth = 0) {
     const block = allBlocks[blockId];
     if (!block?.data) return;
 
@@ -96,6 +115,7 @@ function blocksToMarkdown(allBlocks, rootId) {
     const text = getBlockText(block);
     const children = block.data.children || [];
     const imgToken = block.data.image?.token || '';
+    const prefix = quoteDepth > 0 ? '> '.repeat(quoteDepth) : '';
 
     // 有序列表计数器重置
     if (type !== 'ordered' && lastType === 'ordered') orderedCounter = 1;
@@ -105,45 +125,95 @@ function blocksToMarkdown(allBlocks, rootId) {
         if (text) { lines.push(`# ${text}`); lines.push(''); }
         break;
       case 'heading1':
-        if (text) { lines.push(`\n## ${text}`); lines.push(''); }
+        if (text) { lines.push(`\n${prefix}## ${text}`); lines.push(''); }
         break;
       case 'heading2':
-        if (text) { lines.push(`\n## ${text}`); lines.push(''); }
+        if (text) { lines.push(`\n${prefix}## ${text}`); lines.push(''); }
         break;
       case 'heading3':
-        if (text) { lines.push(`\n### ${text}`); lines.push(''); }
+        if (text) { lines.push(`\n${prefix}### ${text}`); lines.push(''); }
         break;
       case 'heading4':
-        if (text) { lines.push(`\n#### ${text}`); lines.push(''); }
+        if (text) { lines.push(`\n${prefix}#### ${text}`); lines.push(''); }
         break;
       case 'heading5':
-        if (text) { lines.push(`\n##### ${text}`); lines.push(''); }
+        if (text) { lines.push(`\n${prefix}##### ${text}`); lines.push(''); }
+        break;
+      case 'heading6':
+      case 'heading7':
+      case 'heading8':
+      case 'heading9':
+        if (text) { lines.push(`\n${prefix}##### ${text}`); lines.push(''); }
         break;
       case 'ordered':
-        if (text) { lines.push(`${orderedCounter}. ${text}`); orderedCounter++; }
+        if (text) { lines.push(`${prefix}${orderedCounter}. ${text}`); orderedCounter++; }
         break;
       case 'bullet':
-        if (text) lines.push(`- ${text}`);
+        if (text) lines.push(`${prefix}- ${text}`);
         break;
-      case 'todo':
-        if (text) lines.push(`- [ ] ${text}`);
+      case 'todo': {
+        const checked = block.data.done ? 'x' : ' ';
+        if (text) lines.push(`${prefix}- [${checked}] ${text}`);
         break;
+      }
       case 'quote_container':
-      case 'callout':
-        if (text) { lines.push(`> ${text}`); lines.push(''); }
-        break;
+        // quote_container 本身没有文本，内容在 children 中
+        // children 需要用 > 前缀渲染
+        for (const childId of children) {
+          traverse(childId, quoteDepth + 1);
+        }
+        lines.push('');
+        return; // 已处理 children，跳过下方的通用 children 递归
+      case 'callout': {
+        // 高亮提示块：emoji + 背景色 + children
+        const emoji = emojiIdToChar(block.data.emoji_id, block.data.emoji_value);
+        if (emoji) lines.push(`${prefix}> ${emoji}`);
+        // children 用 > 前缀渲染
+        for (const childId of children) {
+          traverse(childId, quoteDepth + 1);
+        }
+        lines.push('');
+        return;
+      }
       case 'code':
-        if (text) { lines.push('```'); lines.push(text); lines.push('```'); lines.push(''); }
+        if (text) {
+          lines.push(`${prefix}\`\`\``);
+          lines.push(`${prefix}${text}`);
+          lines.push(`${prefix}\`\`\``);
+          lines.push('');
+        }
         break;
       case 'divider':
-        lines.push('---'); lines.push('');
+        lines.push(`${prefix}---`); lines.push('');
         break;
       case 'image':
         if (imgToken) {
           const url = imgTokenToUrl(imgToken, blockId);
           images.push(url);
-          lines.push(`![图片](${url})`); lines.push('');
+          lines.push(`${prefix}![图片](${url})`); lines.push('');
         }
+        break;
+      case 'iframe': {
+        // 嵌入内容：视频、妙记、网页等
+        const comp = block.data.iframe?.component || {};
+        const originalUrl = comp.original_text ? decodeURIComponent(comp.original_text) : comp.url || '';
+        const iframeType = comp.type || 'embed';
+        const typeLabel = iframeType.includes('minutes') ? '📹 妙记' :
+          iframeType.includes('video') ? '📹 视频' :
+          iframeType.includes('bitable') ? '📊 多维表格' : '🔗 嵌入';
+        if (originalUrl) {
+          lines.push(`${prefix}> ${typeLabel}: ${originalUrl}`);
+          lines.push('');
+        }
+        break;
+      }
+      case 'base_refer':
+        // 多维表格引用，标记跳过
+        lines.push(`${prefix}> 📊 *[多维表格引用]*`);
+        lines.push('');
+        break;
+      case 'isv':
+        // 第三方应用块（如目录导航），跳过
         break;
       case 'table':
       case 'table_cell':
@@ -154,18 +224,18 @@ function blocksToMarkdown(allBlocks, rootId) {
         // grid 布局通过 children 递归处理
         break;
       default:
-        if (text) { lines.push(text); lines.push(''); }
+        if (text) { lines.push(`${prefix}${text}`); lines.push(''); }
     }
 
     lastType = type;
 
-    // 递归处理 children
+    // 递归处理 children（quote_container 和 callout 已在上面单独处理）
     for (const childId of children) {
-      traverse(childId);
+      traverse(childId, quoteDepth);
     }
   }
 
-  traverse(rootId);
+  traverse(rootId, 0);
 
   const markdown = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   return { markdown, images };
