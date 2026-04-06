@@ -23,38 +23,23 @@
 //   proxy.setCookie(targetId, cookie)  — 注入 Cookie
 //   proxy.getCookies(targetId, domain) — 获取 Cookie
 
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
 export default {
   name: 'example',
   domains: ['example.com'],
-  description: '示例适配器',
+  description: 'Example adapter',
 
-  // 根据 URL 判断页面类型
   detect(url) {
     if (url.includes('/article/')) return 'article';
     return 'default';
   },
 
-  // 提取页面内容
-  // ctx: { url, pageType }
-  async extract(proxy, targetId, ctx) {
-    // 等待页面关键元素加载
+  async extract(proxy, targetId, /* ctx */) {
     await proxy.waitFor(targetId, 'article', 10000);
-
-    // 提取标题
     const title = await proxy.eval(targetId, 'document.title');
-
-    // 提取正文
     const { text } = await proxy.extractText(targetId, {
       selector: 'article',
       scroll: true,
     });
-
-    return {
-      title,
-      content: text,
-      format: 'text',
-    };
+    return { title, content: text, format: 'text' };
   },
 };
