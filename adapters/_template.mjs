@@ -1,37 +1,38 @@
-// AnyReach adapter template
-// Copy to {domain}.mjs and implement. See _utils.mjs for shared helpers.
+// AnyReach adapter template — copy to {domain}.mjs and fill in.
 //
-// Adapter interface:
-//   name, domains[], description
-//   detect(url) → pageType string
-//   extract(proxy, targetId, ctx) → result object
+// Shared utils:
+//   import { sleep, downloadFile, downloadMedia, scrollToLoad } from './_utils.mjs';
 //
-// ProxyClient methods: eval, click, clickAt, scroll, screenshot,
-//   extractText, fill, waitFor, navigate, info, close, setCookie,
-//   getCookies, newTab, preScript
-//
-// Shared utils: import { sleep, downloadFile, downloadMedia, scrollToLoad } from './_utils.mjs';
+// ProxyClient (proxy.*):
+//   eval, click, clickAt, scroll, screenshot, extractText, fill,
+//   waitFor, navigate, info, close, newTab, setCookie, getCookies, preScript
 
-import { sleep, scrollToLoad } from './_utils.mjs';
+// import { sleep, downloadFile, downloadMedia, scrollToLoad } from './_utils.mjs';
 
 export default {
-  name: 'example',
-  domains: ['example.com'],
-  description: 'Example adapter',
+  // --- required ---
+  name: 'TODO',
+  domains: ['TODO.com'],
+  description: 'TODO',
 
+  // --- optional: classify URL into page type ---
   detect(url) {
-    if (url.includes('/article/')) return 'article';
+    // return 'article', 'list', etc. based on URL pattern
     return 'default';
   },
 
-  async extract(proxy, targetId, /* ctx */) {
-    await proxy.waitFor(targetId, 'article', 10000);
-    await sleep(500);
-    const title = await proxy.eval(targetId, 'document.title');
-    const cards = await scrollToLoad(proxy, targetId, {
-      extractJS: `Array.from(document.querySelectorAll('.item')).map(el => el.innerText)`,
-      limit: 10,
-    });
-    return { title, cards, format: 'json' };
+  // --- required: extract content from a loaded page ---
+  // proxy: ProxyClient instance
+  // targetId: browser tab ID (already navigated to ctx.url)
+  // ctx: { url, pageType, limit?, ...extra options }
+  async extract(proxy, targetId, ctx) {
+    // 1. wait for content to render
+    // await proxy.waitFor(targetId, '.content', 10000);
+
+    // 2. extract data
+    // const data = await proxy.eval(targetId, `document.title`);
+
+    // 3. return structured result
+    return { error: 'not implemented' };
   },
 };
