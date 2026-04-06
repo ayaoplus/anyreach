@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "repository": "https://github.com/ayaoplus/anyreach",
+  "adapters": {
+    "feishu": {
+      "domains": ["feishu.cn", "larksuite.com"],
+      "description": "Feishu wiki/docx extraction via window.DATA",
+      "files": ["adapters/feishu.mjs"],
+      "updated": "2026-04-06"
+    },
+    "xiaohongshu": {
+      "domains": ["xiaohongshu.com", "xhslink.com"],
+      "description": "Xiaohongshu note, profile, feed extraction",
+      "files": ["adapters/xiaohongshu.mjs", "adapters/xiaohongshu.md"],
+      "updated": "2026-04-06"
+    },
+    "scys": {
+      "domains": ["scys.com"],
+      "description": "生财有术: articles, opportunities, courses",
+      "files": ["adapters/scys.mjs"],
+      "updated": "2026-04-06"
+    }
+  },
+  "shared": ["adapters/_utils.mjs"]
+}

@@ -14,6 +14,11 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADAPTERS_DIR = path.join(ROOT, 'adapters');
+
+// Remote registry for dynamic adapter download
+const REGISTRY_URL = process.env.ANYREACH_REGISTRY
+  || 'https://raw.githubusercontent.com/ayaoplus/anyreach/main/registry.json';
+const RAW_BASE = 'https://raw.githubusercontent.com/ayaoplus/anyreach/main/';
 const PROXY_PORT = Number(process.env.CDP_PROXY_PORT || 3456);
 
 // --- Proxy 客户端（供适配器使用） ---
@@ -180,6 +185,67 @@ function loadHints() {
   return hints;
 }
 
+// --- 远程注册表 ---
+
+let _registryCache = null;
+
+async function fetchRegistry() {
+  if (_registryCache) return _registryCache;
+  try {
+    const res = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    _registryCache = await res.json();
+    return _registryCache;
+  } catch {
+    return null;
+  }
+}
+
+// Check if hostname matches any adapter in the remote registry
+async function checkRemoteRegistry(hostname) {
+  const reg = await fetchRegistry();
+  if (!reg?.adapters) return null;
+  for (const [name, entry] of Object.entries(reg.adapters)) {
+    for (const d of entry.domains || []) {
+      if (hostname === d || hostname.endsWith('.' + d)) {
+        return { name, ...entry };
+      }
+    }
+  }
+  return null;
+}
+
+// Download adapter files from remote and cache locally
+async function downloadAdapter(remoteEntry) {
+  const files = [...(remoteEntry.files || [])];
+
+  // also download shared utils if not present locally
+  const reg = await fetchRegistry();
+  if (reg?.shared) {
+    for (const sf of reg.shared) {
+      const localPath = path.join(ROOT, sf);
+      if (!fs.existsSync(localPath)) files.push(sf);
+    }
+  }
+
+  const results = [];
+  for (const file of files) {
+    const url = RAW_BASE + file;
+    const localPath = path.join(ROOT, file);
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) { results.push({ file, error: `HTTP ${res.status}` }); continue; }
+      const content = await res.text();
+      fs.mkdirSync(path.dirname(localPath), { recursive: true });
+      fs.writeFileSync(localPath, content, 'utf8');
+      results.push({ file, saved: localPath });
+    } catch (e) {
+      results.push({ file, error: e.message });
+    }
+  }
+  return results;
+}
+
 // 根据 URL 匹配：先找 .mjs 适配器，再找 .md 提示
 async function matchUrl(url) {
   const hostname = extractDomain(new URL(url).hostname);
@@ -205,16 +271,25 @@ async function matchUrl(url) {
     }
   }
 
-  // 第三层：通用模式
+  // 第三层：远程注册表 — 检查是否有可下载的适配器
+  const remote = await checkRemoteRegistry(hostname);
+  if (remote) {
+    return { level: 'remote', remote };
+  }
+
+  // 第四层：通用模式
   return { level: 'none' };
 }
 
 // --- 公开 API ---
 
-// 检查 URL 的匹配层级
+// 检查 URL 的匹配层级（adapter → hint → remote → none）
 export async function checkUrl(url) {
   return matchUrl(url);
 }
+
+// 从远程下载适配器到本地
+export { downloadAdapter };
 
 // 获取 .md 提示内容
 export async function getHint(url) {
@@ -223,9 +298,17 @@ export async function getHint(url) {
   return null;
 }
 
-// 运行代码适配器
+// 运行代码适配器（自动下载远程适配器）
 export async function runAdapter(url, opts = {}) {
-  const match = await matchUrl(url);
+  let match = await matchUrl(url);
+
+  // auto-download remote adapter if available
+  if (match.level === 'remote') {
+    console.error(`[AnyReach] downloading adapter: ${match.remote.name}...`);
+    await downloadAdapter(match.remote);
+    match = await matchUrl(url); // re-match after download
+  }
+
   if (match.level !== 'adapter') {
     const err = new Error('no_adapter');
     err.code = 'NO_ADAPTER';
@@ -278,12 +361,14 @@ async function main() {
   if (command === 'check') {
     if (!arg) { console.error('Usage: adapter-runner.mjs check <url>'); process.exit(1); }
     const match = await matchUrl(arg);
-    console.log(JSON.stringify(match.level === 'adapter'
+    const out = match.level === 'adapter'
       ? { level: 'adapter', name: match.adapter.name, domains: match.adapter.domains }
       : match.level === 'hint'
         ? { level: 'hint', domain: match.hint.domain, file: match.hint.file }
-        : { level: 'none' }
-    ));
+        : match.level === 'remote'
+          ? { level: 'remote', name: match.remote.name, domains: match.remote.domains }
+          : { level: 'none' };
+    console.log(JSON.stringify(out));
     return;
   }
 
@@ -314,13 +399,31 @@ async function main() {
     return;
   }
 
+  if (command === 'download') {
+    if (!arg) { console.error('Usage: adapter-runner.mjs download <url>'); process.exit(1); }
+    const match = await matchUrl(arg);
+    if (match.level === 'adapter') {
+      console.log(`Already installed: ${match.adapter.name}`);
+    } else if (match.level === 'remote') {
+      console.log(`Downloading: ${match.remote.name}...`);
+      const results = await downloadAdapter(match.remote);
+      for (const r of results) {
+        console.log(r.error ? `  FAIL ${r.file}: ${r.error}` : `  OK ${r.saved}`);
+      }
+    } else {
+      console.log('No adapter available for this URL (local or remote).');
+    }
+    return;
+  }
+
   console.log('AnyReach Adapter Runner');
   console.log('');
   console.log('Usage:');
   console.log('  node adapter-runner.mjs list              List installed adapters and hints');
-  console.log('  node adapter-runner.mjs check <url>       Check URL match level (adapter/hint/none)');
-  console.log('  node adapter-runner.mjs run <url>         Run code adapter, output JSON');
+  console.log('  node adapter-runner.mjs check <url>       Check match level (adapter/hint/remote/none)');
+  console.log('  node adapter-runner.mjs run <url>         Run adapter (auto-downloads if remote)');
   console.log('  node adapter-runner.mjs hint <url>        Get .md hint content for URL');
+  console.log('  node adapter-runner.mjs download <url>    Download remote adapter to local');
 }
 
 // 仅在 CLI 直接调用时运行 main
