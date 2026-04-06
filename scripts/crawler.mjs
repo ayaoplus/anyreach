@@ -89,26 +89,26 @@ async function proxyFetch(proxyBase, path, opts = {}) {
 
 // --- Cookie 移植 ---
 async function transplantCookies(userProxyBase, managedProxyBase) {
-  // 通过浏览器级 CDP 命令导出所有 cookie
-  const cookies = await proxyFetch(userProxyBase, '/cdp', {
-    method: 'POST',
-    body: JSON.stringify({ method: 'Storage.getCookies' }),
-  });
+  // 在用户 Chrome 上开一个临时 tab，通过 session 级 CDP 导出所有 cookie
+  const { targetId } = await proxyFetch(userProxyBase, '/new?url=' + encodeURIComponent('about:blank'));
 
-  if (cookies.error) {
-    // fallback: 用 Network.getAllCookies（旧版 Chrome 兼容）
-    const fallback = await proxyFetch(userProxyBase, '/cdp', {
+  try {
+    // Network.getAllCookies 返回浏览器所有 cookie（不限当前页域名）
+    const result = await proxyFetch(userProxyBase, `/cdp?target=${targetId}`, {
       method: 'POST',
       body: JSON.stringify({ method: 'Network.getAllCookies' }),
     });
-    if (fallback.error) {
-      console.error(`[crawler] cookie 导出失败: ${fallback.error}`);
+
+    if (result.error) {
+      log(`cookie 导出失败: ${result.error}`);
       return 0;
     }
-    return await injectCookies(managedProxyBase, fallback.cookies || []);
-  }
 
-  return await injectCookies(managedProxyBase, cookies.cookies || []);
+    const cookies = result.cookies || [];
+    return await injectCookies(managedProxyBase, cookies);
+  } finally {
+    await proxyFetch(userProxyBase, `/close?target=${targetId}`).catch(() => {});
+  }
 }
 
 // 向 managed Chrome 注入 cookie
