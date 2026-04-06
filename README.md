@@ -22,11 +22,18 @@ Three-tier site knowledge:
 Install this skill: https://github.com/ayaoplus/anyreach
 ```
 
-**Manual install (Claude Code):**
+**Manual install (all agents):**
 
 ```bash
-git clone https://github.com/ayaoplus/anyreach ~/.claude/skills/anyreach
+git clone https://github.com/ayaoplus/anyreach ~/anyreach
+node ~/anyreach/scripts/install.mjs
 ```
+
+This creates symlinks for all supported agents:
+- `~/.claude/skills/anyreach` → Claude Code
+- `~/.agents/skills/anyreach` → Codex + OpenClaw
+
+One copy, shared `SKILL.md`, all three agents can load it.
 
 ### Prerequisites
 
@@ -39,7 +46,7 @@ git clone https://github.com/ayaoplus/anyreach ~/.claude/skills/anyreach
 ### Verify
 
 ```bash
-node ~/.claude/skills/anyreach/scripts/check-deps.mjs
+node ~/anyreach/scripts/check-deps.mjs
 # Expected: node: ok, chrome: ok, proxy: ready
 ```
 
