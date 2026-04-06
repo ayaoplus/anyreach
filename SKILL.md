@@ -10,7 +10,9 @@ description:
 ## 前置检查
 
 ```bash
-node "$CLAUDE_SKILL_DIR/scripts/check-deps.mjs"
+node "$(dirname "$0")/scripts/check-deps.mjs"
+# 如果上述路径不可用，用 skill 目录的绝对路径替代：
+# node /path/to/anyreach/scripts/check-deps.mjs
 ```
 
 未通过时引导用户：
@@ -35,8 +37,8 @@ node "$CLAUDE_SKILL_DIR/scripts/check-deps.mjs"
 
 | 场景 | 工具 |
 |------|------|
-| 搜索关键词、发现信息来源 | **WebSearch** |
-| URL 已知，公开页面提取信息 | **WebFetch** 或 **Jina**（`r.jina.ai/example.com`，文章类页面省 token） |
+| 搜索关键词、发现信息来源 | Agent 内置搜索工具（如有）或 CDP 打开搜索引擎 |
+| URL 已知，公开页面提取信息 | Agent 内置网页读取工具（如有），或 **Jina**（`r.jina.ai/example.com`，省 token），或 **curl** |
 | 需要原始 HTML（meta、JSON-LD） | **curl** |
 | 反爬平台、需登录态、需交互操作 | **CDP Proxy** |
 
@@ -49,8 +51,10 @@ node "$CLAUDE_SKILL_DIR/scripts/check-deps.mjs"
 ### 启动
 
 ```bash
-node "$CLAUDE_SKILL_DIR/scripts/check-deps.mjs"
+node "<anyreach_dir>/scripts/check-deps.mjs"
 ```
+
+> `<anyreach_dir>` 是本 skill 所在目录。Agent 可通过环境变量（如 `$CLAUDE_SKILL_DIR`）或安装路径确定。
 
 ### API
 
@@ -93,12 +97,12 @@ curl -s "http://localhost:3456/getCookies?target=ID&domain=x.com"    # 获取 Co
 
 用 `/close` 关闭自己创建的 tab，保留用户原有 tab。Proxy 持续运行。
 
-## 站点知识（三层递进）
+## 站点知识（四层递进）
 
 访问 URL 前，先检查是否有站点知识可用：
 
 ```bash
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" check "URL"
+node "<anyreach_dir>/scripts/adapter-runner.mjs" check "URL"
 ```
 
 返回四种层级：
@@ -113,20 +117,20 @@ node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" check "URL"
 `run` 命令遇到 `remote` 时自动下载到本地，无需手动操作。
 
 ```bash
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" list               # 列出本地适配器
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" run "URL"          # 运行（自动下载）
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" hint "URL"         # 获取 .md 提示
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" download "URL"     # 手动下载远程适配器
+node "<anyreach_dir>/scripts/adapter-runner.mjs" list               # 列出本地适配器
+node "<anyreach_dir>/scripts/adapter-runner.mjs" run "URL"          # 运行（自动下载）
+node "<anyreach_dir>/scripts/adapter-runner.mjs" hint "URL"         # 获取 .md 提示
+node "<anyreach_dir>/scripts/adapter-runner.mjs" download "URL"     # 手动下载远程适配器
 ```
 
 适配器失败时直接降级到 hint 或通用模式，不反复重试。
 
 ## 并行分治
 
-多个独立目标时，分发子 Agent 并行执行：
-- 子 Agent prompt 写**目标**（"获取"、"调研"），不写具体手段（"搜索"会锚定 WebSearch）
-- 所有子 Agent 共享一个 Proxy，各自创建/关闭自己的 tab，无竞态
-- 子 Agent 必须加载 anyreach skill 并遵循指引
+多个独立目标时，利用 Agent 框架的并行能力分治执行：
+- 任务描述写**目标**（"获取"、"调研"），不写具体手段（避免锚定到特定工具）
+- 所有并行任务共享一个 CDP Proxy，各自创建/关闭自己的 tab，无竞态
+- 并行任务需加载 anyreach skill 并遵循指引
 
 ## 技术事实
 
