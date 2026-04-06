@@ -4,6 +4,7 @@
 
 Intelligent web access for AI agents. CDP browser automation with a site adapter system for deterministic content extraction.
 
+
 ## What it does
 
 AnyReach connects your AI agent (Claude Code, Codex, OpenClaw) to your daily Chrome browser. The agent operates in background tabs — sharing your login state, invisible to anti-bot detection, and never stealing your browser focus.
@@ -15,6 +16,7 @@ Three-tier site knowledge:
 | **Adapter** (.mjs) | Deterministic code extraction | Zero | Sites with known internal APIs (e.g., Feishu's `window.DATA`) |
 | **Hint** (.md) | Prompt-based experience for the LLM | Low | Sites with known patterns but too complex for a fixed script |
 | **Generic** | Agent writes JS on the fly via `/eval` | High | Unknown sites, one-off tasks |
+
 
 ## Install
 
@@ -52,6 +54,7 @@ node ~/anyreach/scripts/check-deps.mjs
 # Expected: node: ok, chrome: ok, proxy: ready
 ```
 
+
 ## Usage
 
 Once installed, tell your agent to do web tasks:
@@ -62,6 +65,7 @@ Once installed, tell your agent to do web tasks:
 - *"Research these 5 competitors in parallel"*
 
 The agent loads SKILL.md, selects the right tool (WebSearch / WebFetch / Jina / CDP), and handles the rest.
+
 
 ## CDP Proxy API
 
@@ -169,6 +173,7 @@ curl -s "http://localhost:3456/events/get?id=COL_1&clear=true"
 
 Full reference: [docs/architecture.md](docs/architecture.md)
 
+
 ## Adapter system
 
 Four-tier resolution: local adapter → local hint → remote registry → generic CDP.
@@ -215,6 +220,7 @@ export default {
 };
 ```
 
+
 ## Installed adapters
 
 | Adapter | Domains | Capabilities |
@@ -223,9 +229,11 @@ export default {
 | **xiaohongshu** | xiaohongshu.com, xhslink.com | Notes (image+text, video+text), profiles, feeds. Scroll-to-load, batch extraction |
 | **scys** | scys.com | Articles, opportunities (list/archive modes with pagination + bid filter), activity projects, course manuals (chapter-by-chapter Markdown extraction). [Technical docs](docs/adapter-scys.md) |
 
+
 ## Credits
 
 Architecture inspired by [web-access](https://github.com/eze-is/web-access) by 一泽 Eze. AnyReach diverges from web-access by adding the adapter system, enhanced CDP endpoints, and Worker-level data interception.
+
 
 ## License
 
