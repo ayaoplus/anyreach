@@ -93,24 +93,30 @@ curl -s "http://localhost:3456/getCookies?target=ID&domain=x.com"    # 获取 Co
 
 用 `/close` 关闭自己创建的 tab，保留用户原有 tab。Proxy 持续运行。
 
-## 站点适配器
+## 站点知识（三层递进）
 
-已知站点有预置适配器，可一步提取内容，跳过手动探测 DOM 的过程。
+访问 URL 前，先检查是否有站点知识可用：
 
 ```bash
-# 检查 URL 是否有适配器
 node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" check "URL"
-
-# 有适配器时直接提取
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" run "URL"
-
-# 列出已安装适配器
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" list
 ```
 
-返回 `has_adapter: true` 时优先用适配器；返回 `false` 或适配器执行失败时，回退通用 CDP 模式。
+返回三种层级：
 
-适配器不是万能的——站点改版可能导致失效。失败时不要反复重试适配器，直接切换到通用模式。
+| level | 含义 | 操作 |
+|-------|------|------|
+| `adapter` | 有代码适配器（.mjs） | `adapter-runner.mjs run "URL"` — 一步提取，结果确定 |
+| `hint` | 有经验提示（.md） | `adapter-runner.mjs hint "URL"` — 获取提示后用通用 CDP 模式操作 |
+| `none` | 无站点知识 | 直接用通用 CDP 模式（eval/click/scroll） |
+
+```bash
+# 其他命令
+node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" list           # 列出所有适配器和提示
+node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" run "URL"      # 运行代码适配器
+node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" hint "URL"     # 获取 .md 提示内容
+```
+
+适配器失败时不要反复重试，直接降级到 hint 或通用模式。站点改版可能导致适配器失效。
 
 ## 并行分治
 
