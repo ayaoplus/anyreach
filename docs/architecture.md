@@ -258,3 +258,13 @@ The agent-facing prompt teaches thinking strategy, not procedures:
 7. **Technical facts** — virtual rendering, lazy loading, Shadow DOM boundaries
 
 What's NOT in SKILL.md: site-specific instructions, step-by-step workflows, redundant API docs.
+
+## Future Work
+
+### Session management for multi-agent concurrency
+
+Current model: each agent/sub-agent manages its own targetIds. Works for single-agent + sub-agent scenarios (Claude Code spawning parallel sub-agents). Breaks when multiple independent agent frameworks share one proxy — no ownership tracking, no crash cleanup.
+
+Planned: lightweight `/session/create` + `/session/close` layer. Each agent framework gets a session, tabs are associated with sessions, one call cleans up all orphan tabs. Fully backward compatible — existing API works unchanged without sessions.
+
+Not implemented yet. Will build when multi-agent usage becomes real.
