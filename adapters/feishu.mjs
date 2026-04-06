@@ -99,6 +99,55 @@ function emojiIdToChar(emojiId, emojiValue) {
   return '';
 }
 
+// 从 block 及其 children 中递归提取纯文本（用于 table cell）
+function getBlockPlainText(allBlocks, blockId) {
+  const block = allBlocks[blockId];
+  if (!block?.data) return '';
+  const text = getBlockText(block);
+  const children = block.data.children || [];
+  if (text) return text;
+  // 递归 children 取文本
+  return children.map(cid => getBlockPlainText(allBlocks, cid)).filter(Boolean).join(' ');
+}
+
+// 将 table block 转为 markdown 表格
+function tableToMarkdown(allBlocks, tableBlock) {
+  const data = tableBlock.data;
+  const cols = data.columns_id || [];
+  const rows = data.rows_id || [];
+  const cells = data.cell_set || {};
+  const hasHeader = data.header_row !== false; // 默认有表头
+
+  if (cols.length === 0 || rows.length === 0) return '';
+
+  const lines = [];
+  for (let r = 0; r < rows.length; r++) {
+    const rowCells = [];
+    for (const colId of cols) {
+      const cellKey = rows[r] + colId;
+      const cell = cells[cellKey];
+      let cellText = '';
+      if (cell?.block_id) {
+        // table_cell block 的内容在 children 中
+        const cellBlock = allBlocks[cell.block_id];
+        if (cellBlock) {
+          const children = cellBlock.data?.children || [];
+          // 合并所有子 block 的文本
+          cellText = children.map(cid => getBlockPlainText(allBlocks, cid)).filter(Boolean).join(' ');
+        }
+      }
+      // 转义 markdown 表格中的 | 字符
+      rowCells.push(cellText.replace(/\|/g, '\\|').replace(/\n/g, ' '));
+    }
+    lines.push('| ' + rowCells.join(' | ') + ' |');
+    // 在第一行后加分隔符
+    if (r === 0 && hasHeader) {
+      lines.push('| ' + cols.map(() => '---').join(' | ') + ' |');
+    }
+  }
+  return lines.join('\n');
+}
+
 // 递归遍历 block 树，生成 markdown
 function blocksToMarkdown(allBlocks, rootId) {
   const lines = [];
@@ -230,10 +279,15 @@ function blocksToMarkdown(allBlocks, rootId) {
       case 'chat_card':
         // 群聊卡片，跳过
         break;
-      case 'table':
+      case 'table': {
+        // 原生表格：按 rows_id × columns_id 顺序提取 cell 内容
+        const tableMd = tableToMarkdown(allBlocks, block);
+        if (tableMd) { lines.push(''); lines.push(tableMd); lines.push(''); }
+        return; // 不递归 children（table 的 cell 已在 tableToMarkdown 中处理）
+      }
       case 'table_cell':
-        // table 内容通过 children 递归处理
-        break;
+        // table_cell 由 tableToMarkdown 处理，不单独输出
+        return;
       case 'grid':
       case 'grid_column':
         // grid 布局通过 children 递归处理
