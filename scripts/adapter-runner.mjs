@@ -117,6 +117,13 @@ class ProxyClient {
     const params = domain ? `&domain=${domain}` : '';
     return this._fetch(`/getCookies?target=${targetId}${params}`);
   }
+
+  // 注入页面前置脚本（在后续导航时于页面 JS 前执行）
+  async preScript(targetId, js) {
+    return this._fetch(`/preScript?target=${targetId}`, {
+      method: 'POST', body: js,
+    });
+  }
 }
 
 // --- 适配器和提示加载 ---

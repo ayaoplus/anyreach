@@ -549,6 +549,16 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(val));
     }
 
+    // POST /preScript?target=xxx - 注入脚本，在后续每次页面导航前执行
+    // 用于拦截 MediaSource、自动播放等，在页面 JS 执行前生效
+    else if (pathname === '/preScript') {
+      const sid = await ensureSession(q.target);
+      const script = await readBody(req);
+      if (!script) { res.statusCode = 400; res.end(JSON.stringify({ error: 'POST body required' })); return; }
+      const resp = await sendCDP('Page.addScriptToEvaluateOnNewDocument', { source: script }, sid);
+      res.end(JSON.stringify({ identifier: resp.result?.identifier }));
+    }
+
     // POST /adapter?url=xxx - 调用站点适配器（由 adapter-runner 处理）
     else if (pathname === '/adapter') {
       const targetUrl = q.url;
@@ -594,6 +604,7 @@ const server = http.createServer(async (req, res) => {
           '/setCookie?target=': 'POST JSON - 注入 Cookie',
           '/getCookies?target=': 'GET - 获取 Cookie',
           '/waitFor?target=&selector=': 'GET - 等待元素',
+          '/preScript?target=': 'POST body=JS - 注入页面前置脚本',
           '/adapter?url=': 'POST - 调用站点适配器',
         },
       }));
