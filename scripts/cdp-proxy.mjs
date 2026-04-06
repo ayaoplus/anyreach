@@ -15,6 +15,7 @@ let ws = null;
 let cmdId = 0;
 const pending = new Map();   // id -> { resolve, timer }
 const sessions = new Map();  // targetId -> sessionId
+const eventCollectors = new Map(); // collectorId -> { filter, events[], maxEvents }
 
 // --- WebSocket 兼容层 ---
 let WS;
@@ -149,6 +150,23 @@ async function connect() {
           requestId: msg.params.requestId,
           errorReason: 'ConnectionRefused',
         }, msg.params.sessionId).catch(() => {});
+      }
+      // Worker 自动注入：当 setAutoAttach + waitForDebugger 模式下，
+      // 自动在新 Worker 上启用 Network 后恢复执行
+      if (msg.method === 'Target.attachedToTarget' && msg.params?.waitingForDebugger) {
+        const workerSid = msg.params.sessionId;
+        sendCDP('Network.enable', {}, workerSid)
+          .then(() => sendCDP('Runtime.runIfWaitingForDebugger', {}, workerSid))
+          .catch(() => {});
+      }
+      // 通用事件收集器：将匹配的 CDP 事件存入队列
+      if (msg.method) {
+        for (const [, col] of eventCollectors) {
+          if (col.filter && !msg.method.startsWith(col.filter)) continue;
+          if (col.sessionId && msg.sessionId !== col.sessionId) continue;
+          col.events.push({ method: msg.method, params: msg.params, sessionId: msg.sessionId });
+          if (col.events.length > (col.maxEvents || 500)) col.events.shift();
+        }
       }
       // 匹配 pending 请求
       if (msg.id && pending.has(msg.id)) {
@@ -415,6 +433,83 @@ const server = http.createServer(async (req, res) => {
       const val = await evalJS(sid, jsMap[dir] || jsMap.down);
       await new Promise(r => setTimeout(r, 800)); // 等待懒加载
       res.end(JSON.stringify({ value: val }));
+    }
+
+    // GET /wheel?target=xxx&x=400&y=300&deltaY=500 - 真实鼠标滚轮事件
+    // 用于虚拟列表（如飞书文档）中 window.scrollBy 不生效的场景
+    else if (pathname === '/wheel') {
+      const sid = await ensureSession(q.target);
+      const x = parseFloat(q.x || '400');
+      const y = parseFloat(q.y || '300');
+      const deltaY = parseFloat(q.deltaY || '500');
+      const deltaX = parseFloat(q.deltaX || '0');
+      // 先移动鼠标到目标位置
+      await sendCDP('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x, y,
+      }, sid);
+      // 用 Input.emulateTouchFromMouseEvent 模拟滚动（兼容性更好）
+      // 或直接用 Input.synthesizeScrollGesture
+      try {
+        await sendCDP('Input.synthesizeScrollGesture', {
+          x, y, yDistance: -deltaY, xDistance: -deltaX,
+          repeatCount: 1, speed: 800,
+        }, sid);
+        res.end(JSON.stringify({ wheeled: true, method: 'synthesizeScrollGesture', x, y, deltaY }));
+      } catch {
+        // 回退到 mouseWheel（旧版 Chrome）
+        try {
+          await sendCDP('Input.dispatchMouseEvent', {
+            type: 'mouseWheel', x, y, deltaX, deltaY,
+          }, sid);
+          res.end(JSON.stringify({ wheeled: true, method: 'mouseWheel', x, y, deltaY }));
+        } catch (e) {
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      }
+    }
+
+    // POST /events/start?target=xxx - 开始收集 CDP 事件
+    // body: JSON { filter: "Network", maxEvents: 200 }
+    else if (pathname === '/events/start') {
+      const sid = await ensureSession(q.target);
+      const opts = JSON.parse(await readBody(req) || '{}');
+      const id = 'col_' + Date.now();
+      eventCollectors.set(id, {
+        filter: opts.filter || null,
+        sessionId: sid,
+        events: [],
+        maxEvents: opts.maxEvents || 500,
+      });
+      res.end(JSON.stringify({ collectorId: id }));
+    }
+
+    // GET /events/get?id=xxx&clear=true - 获取收集到的事件
+    else if (pathname === '/events/get') {
+      const col = eventCollectors.get(q.id);
+      if (!col) { res.statusCode = 404; res.end(JSON.stringify({ error: 'collector not found' })); return; }
+      const events = [...col.events];
+      if (q.clear === 'true') col.events = [];
+      res.end(JSON.stringify({ count: events.length, events }));
+    }
+
+    // GET /events/stop?id=xxx - 停止收集
+    else if (pathname === '/events/stop') {
+      eventCollectors.delete(q.id);
+      res.end(JSON.stringify({ stopped: true }));
+    }
+
+    // POST /cdp?target=xxx - 发送任意 CDP 命令
+    // body: JSON { method: "Network.enable", params: {} }
+    // 可选 query: session=xxx 直接指定 session ID（用于 Worker 等子 target）
+    else if (pathname === '/cdp') {
+      const sid = q.session || await ensureSession(q.target);
+      const cmd = JSON.parse(await readBody(req));
+      try {
+        const result = await sendCDP(cmd.method, cmd.params || {}, sid);
+        res.end(JSON.stringify(result?.result ?? result));
+      } catch (e) {
+        res.end(JSON.stringify({ error: e.message }));
+      }
     }
 
     // GET /screenshot?target=xxx&file=/tmp/x.png

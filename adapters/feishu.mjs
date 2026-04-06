@@ -1,11 +1,20 @@
 // AnyReach 飞书适配器
-// 通过 window.DATA.clientVars.data 直接读取文档内存数据
-// 完全绕过虚拟化渲染，100% 提取文档全文
+// 通过 window.DATA.clientVars.data 读取文档 block 数据
+// 长文档支持：通过 CDP 接口从 Web Worker 获取后续 slice 的 block 数据
 //
-// 飞书在浏览器中通过 window.DATA 暴露文档数据：
-//   - clientVars.data.block_map: 所有文档块的映射表
-//   - clientVars.data.block_sequence: 文档块的渲染顺序
-//   - 每个 block 包含 type（段落类型）和 text（文本内容）
+// 飞书文档数据结构：
+//   - block_map: 所有 block 的 id → data 映射
+//   - block_sequence: 顶层 block 的渲染顺序
+//   - 每个 block 的 children 数组定义嵌套结构
+//   - has_more: 是否有后续 slice 未加载
+//
+// 长文档加载机制：
+//   飞书对长文档做分 slice 加载。第一个 slice 嵌在 HTML 中（SSR），
+//   后续 slice 由 docxClientvarFetchManager 通过 Web Worker 异步获取。
+//   Worker 请求 /space/api/docx/pages/client_vars 接口加载剩余 block。
+//   我们通过 CDP 的 Worker session 重放这些请求来获取完整数据。
+
+import { sleep } from './_utils.mjs';
 
 // 等待飞书文档数据加载完成
 const WAIT_DATA_JS = `new Promise((resolve) => {
@@ -13,7 +22,7 @@ const WAIT_DATA_JS = `new Promise((resolve) => {
   const check = () => {
     const d = window.DATA?.clientVars?.data;
     if (d?.block_map && d?.block_sequence?.length > 0) {
-      return resolve({ ready: true, blocks: d.block_sequence.length });
+      return resolve({ ready: true, blocks: d.block_sequence.length, hasMore: d.has_more });
     }
     if (++tries > 30) return resolve({ ready: false, timeout: true });
     setTimeout(check, 500);
@@ -21,75 +30,15 @@ const WAIT_DATA_JS = `new Promise((resolve) => {
   check();
 })`;
 
-// 从 window.DATA 提取完整文档内容并转为 Markdown
-const EXTRACT_FROM_DATA_JS = `(() => {
+// 获取文档结构信息（block_map + children 树）
+const GET_DOC_STRUCTURE_JS = `(() => {
   const d = window.DATA?.clientVars?.data;
-  if (!d?.block_map || !d?.block_sequence) return null;
-
-  const seq = d.block_sequence;
-  const map = d.block_map;
-  const lines = [];
-  let orderedCounter = 1;
-  let lastType = '';
-
-  for (const id of seq) {
-    const b = map[id];
-    if (!b?.data) continue;
-    const type = b.data.type;
-    const raw = b.data.text?.initialAttributedTexts?.text?.['0'] || '';
-    const text = raw.trim();
-    if (!text) continue;
-
-    // 有序列表计数器重置
-    if (type !== 'ordered' && lastType === 'ordered') orderedCounter = 1;
-
-    switch (type) {
-      case 'page':
-        lines.push('# ' + text);
-        break;
-      case 'heading1':
-        lines.push('\\n# ' + text);
-        break;
-      case 'heading2':
-        lines.push('\\n## ' + text);
-        break;
-      case 'heading3':
-        lines.push('\\n### ' + text);
-        break;
-      case 'heading4':
-        lines.push('\\n#### ' + text);
-        break;
-      case 'heading5':
-        lines.push('\\n##### ' + text);
-        break;
-      case 'ordered':
-        lines.push(orderedCounter + '. ' + text);
-        orderedCounter++;
-        break;
-      case 'bullet':
-        lines.push('- ' + text);
-        break;
-      case 'todo':
-        lines.push('- [ ] ' + text);
-        break;
-      case 'quote_container':
-      case 'callout':
-        lines.push('> ' + text);
-        break;
-      case 'code':
-        lines.push('${'`'}${'`'}${'`'}\\n' + text + '\\n${'`'}${'`'}${'`'}');
-        break;
-      case 'divider':
-        lines.push('---');
-        break;
-      default:
-        // text, paragraph 等普通文本块
-        lines.push(text);
-    }
-    lastType = type;
-  }
-
-  return lines.join('\\n');
+  if (!d) return null;
+  return JSON.stringify({
+    block_map: d.block_map,
+    root_id: d.block_sequence?.[0],
+    has_more: d.has_more,
+  });
 })()`;
 
 // 提取文档元信息
@@ -102,13 +51,207 @@ const EXTRACT_META_JS = `(() => {
     createTime: meta?.create_time || null,
     updateTime: meta?.update_time || null,
     blockCount: d?.block_sequence?.length || 0,
+    hasMore: d?.has_more || false,
   };
 })()`;
+
+// 从 block 数据提取文本，处理加粗
+function getBlockText(block) {
+  const iat = block?.data?.text?.initialAttributedTexts || {};
+  const text = (iat.text?.['0'] || '').trim();
+  if (!text) return '';
+
+  // 检查是否整段加粗
+  const apool = block?.data?.text?.apool?.numToAttrib || {};
+  const hasBold = Object.values(apool).some(v => v[0] === 'bold' && v[1] === 'true');
+  if (hasBold) {
+    const attribs = iat.attribs?.['0'] || '';
+    // 如果 attribs 中所有字符都带 bold 属性，整段加粗
+    const boldIdx = Object.entries(apool).find(([, v]) => v[0] === 'bold')?.[0];
+    if (boldIdx !== undefined && attribs.includes(`*${boldIdx}`) && attribs.split('+').length <= 2) {
+      return `**${text}**`;
+    }
+  }
+  return text;
+}
+
+// 图片 token 转 CDN URL
+function imgTokenToUrl(token, blockId) {
+  if (!token) return '';
+  return `https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/v2/cover/${token}/?fallback_source=1&height=1280&mount_node_token=${blockId}&mount_point=docx_image`;
+}
+
+// 递归遍历 block 树，生成 markdown
+function blocksToMarkdown(allBlocks, rootId) {
+  const lines = [];
+  const images = [];
+  let orderedCounter = 1;
+  let lastType = '';
+
+  function traverse(blockId) {
+    const block = allBlocks[blockId];
+    if (!block?.data) return;
+
+    const type = block.data.type;
+    const text = getBlockText(block);
+    const children = block.data.children || [];
+    const imgToken = block.data.image?.token || '';
+
+    // 有序列表计数器重置
+    if (type !== 'ordered' && lastType === 'ordered') orderedCounter = 1;
+
+    switch (type) {
+      case 'page':
+        if (text) { lines.push(`# ${text}`); lines.push(''); }
+        break;
+      case 'heading1':
+        if (text) { lines.push(`\n## ${text}`); lines.push(''); }
+        break;
+      case 'heading2':
+        if (text) { lines.push(`\n## ${text}`); lines.push(''); }
+        break;
+      case 'heading3':
+        if (text) { lines.push(`\n### ${text}`); lines.push(''); }
+        break;
+      case 'heading4':
+        if (text) { lines.push(`\n#### ${text}`); lines.push(''); }
+        break;
+      case 'heading5':
+        if (text) { lines.push(`\n##### ${text}`); lines.push(''); }
+        break;
+      case 'ordered':
+        if (text) { lines.push(`${orderedCounter}. ${text}`); orderedCounter++; }
+        break;
+      case 'bullet':
+        if (text) lines.push(`- ${text}`);
+        break;
+      case 'todo':
+        if (text) lines.push(`- [ ] ${text}`);
+        break;
+      case 'quote_container':
+      case 'callout':
+        if (text) { lines.push(`> ${text}`); lines.push(''); }
+        break;
+      case 'code':
+        if (text) { lines.push('```'); lines.push(text); lines.push('```'); lines.push(''); }
+        break;
+      case 'divider':
+        lines.push('---'); lines.push('');
+        break;
+      case 'image':
+        if (imgToken) {
+          const url = imgTokenToUrl(imgToken, blockId);
+          images.push(url);
+          lines.push(`![图片](${url})`); lines.push('');
+        }
+        break;
+      case 'table':
+      case 'table_cell':
+        // table 内容通过 children 递归处理
+        break;
+      case 'grid':
+      case 'grid_column':
+        // grid 布局通过 children 递归处理
+        break;
+      default:
+        if (text) { lines.push(text); lines.push(''); }
+    }
+
+    lastType = type;
+
+    // 递归处理 children
+    for (const childId of children) {
+      traverse(childId);
+    }
+  }
+
+  traverse(rootId);
+
+  const markdown = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { markdown, images };
+}
+
+// 通过刷新页面 + autoAttach 捕获 Worker，从 Worker 获取后续 slice 的 block 数据
+// 必须在页面加载前设置 autoAttach，否则已存在的 Worker 不会被捕获
+async function fetchMissingBlocks(proxy, targetId, pageUrl) {
+  const proxyBase = `http://127.0.0.1:${proxy.port}`;
+
+  // 1. 设置 autoAttach + waitForDebugger（Worker 创建时暂停，proxy 自动启用 Network 后恢复）
+  await cdpCall(proxyBase, targetId, 'Target.setAutoAttach', {
+    autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+  });
+
+  // 2. 开始事件收集
+  const colResp = await fetch(`${proxyBase}/events/start?target=${targetId}`, {
+    method: 'POST', body: JSON.stringify({ maxEvents: 100 }),
+  }).then(r => r.json());
+  const collectorId = colResp.collectorId;
+
+  // 3. 刷新页面，触发 Worker 重新创建
+  await fetch(`${proxyBase}/navigate?target=${targetId}&url=${encodeURIComponent(pageUrl)}`).then(r => r.json());
+
+  // 4. 等待页面和 Worker 加载完成
+  await sleep(10000);
+
+  // 5. 从事件中找到 Worker session
+  const events = await fetch(`${proxyBase}/events/get?id=${collectorId}`).then(r => r.json());
+  await fetch(`${proxyBase}/events/stop?id=${collectorId}`).then(r => r.json());
+
+  let workerSessionId = null;
+  for (const e of events.events || []) {
+    if (e.method === 'Target.attachedToTarget') {
+      const info = e.params?.targetInfo || {};
+      if (info.type === 'worker') {
+        workerSessionId = e.params.sessionId;
+        break;
+      }
+    }
+  }
+
+  if (!workerSessionId) return null;
+
+  // 6. 从 Worker 的 performance entries 获取 API URL，重新 fetch 获取 block 数据
+  const result = await cdpCall(proxyBase, null, 'Runtime.evaluate', {
+    expression: `(async () => {
+      const urls = performance.getEntriesByType("resource").map(e => e.name);
+      const allBlocks = {};
+      for (const url of urls) {
+        try {
+          const resp = await fetch(url);
+          const data = await resp.json();
+          Object.assign(allBlocks, data?.data?.block_map || {});
+        } catch {}
+      }
+      return JSON.stringify(allBlocks);
+    })()`,
+    awaitPromise: true,
+    returnByValue: true,
+  }, workerSessionId);
+
+  if (!result?.value) return null;
+
+  try {
+    return JSON.parse(result.value);
+  } catch {
+    return null;
+  }
+}
+
+// 发送 CDP 命令的辅助函数
+async function cdpCall(proxyBase, targetId, method, params, sessionId) {
+  const query = sessionId ? `session=${sessionId}` : `target=${targetId}`;
+  const resp = await fetch(`${proxyBase}/cdp?${query}`, {
+    method: 'POST',
+    body: JSON.stringify({ method, params }),
+  });
+  const data = await resp.json();
+  return data?.result ?? data;
+}
 
 export default {
   name: 'feishu',
   domains: ['feishu.cn', 'larksuite.com'],
-  description: '飞书知识库/云文档内容提取（通过 window.DATA 内存数据）',
+  description: '飞书知识库/云文档内容提取（window.DATA + Worker block 补全）',
 
   detect(url) {
     if (url.includes('/wiki/')) return 'wiki';
@@ -141,21 +284,69 @@ export default {
       };
     }
 
-    // 从内存数据直接提取
-    const content = await proxy.eval(targetId, EXTRACT_FROM_DATA_JS);
+    // 获取元信息
     const meta = await proxy.eval(targetId, EXTRACT_META_JS);
+
+    // 获取 block_map 和文档结构
+    let structRaw = await proxy.eval(targetId, GET_DOC_STRUCTURE_JS);
+    if (!structRaw) {
+      return { title: meta?.title || '', content: null, error: 'block_map 不可用' };
+    }
+
+    let struct;
+    try {
+      struct = JSON.parse(structRaw);
+    } catch {
+      return { title: meta?.title || '', content: null, error: 'block_map 解析失败' };
+    }
+
+    let allBlocks = struct.block_map || {};
+    let rootId = struct.root_id;
+    let workerBlockCount = 0;
+
+    // 如果有后续 slice，刷新页面后从 Worker 获取完整数据
+    if (struct.has_more) {
+      try {
+        const workerBlocks = await fetchMissingBlocks(proxy, targetId, ctx.url);
+        if (workerBlocks) {
+          workerBlockCount = Object.keys(workerBlocks).length;
+          // Worker 返回的数据包含所有 slice，可能与初始数据重叠
+          allBlocks = { ...allBlocks, ...workerBlocks };
+
+          // 刷新后 window.DATA 也更新了，重新读取以获取最新的 block_map
+          const newStructRaw = await proxy.eval(targetId, GET_DOC_STRUCTURE_JS);
+          if (newStructRaw) {
+            try {
+              const newStruct = JSON.parse(newStructRaw);
+              // 合并刷新后的主线程数据
+              allBlocks = { ...allBlocks, ...newStruct.block_map };
+              rootId = newStruct.root_id || rootId;
+            } catch { /* 用已有数据 */ }
+          }
+        }
+      } catch (e) {
+        // Worker 获取失败，用已有数据继续（部分内容）
+        console.error('[feishu] Worker block fetch failed:', e.message);
+      }
+    }
+
+    // 递归遍历 block 树生成 markdown
+    const { markdown, images } = blocksToMarkdown(allBlocks, rootId);
 
     return {
       title: meta?.title || '',
-      content: content || '',
+      content: markdown,
       format: 'markdown',
       meta: {
         author: meta?.author,
         createTime: meta?.createTime,
         updateTime: meta?.updateTime,
-        blockCount: meta?.blockCount,
+        blockCount: Object.keys(allBlocks).length,
+        workerBlockCount,
+        hasMore: struct.has_more,
       },
-      contentLength: content?.length || 0,
+      images,
+      contentLength: markdown.length,
     };
   },
 };
