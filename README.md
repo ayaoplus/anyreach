@@ -85,6 +85,10 @@ Full reference: [docs/architecture.md](docs/architecture.md)
 
 ## Adapter system
 
+Four-tier resolution: local adapter → local hint → remote registry → generic CDP.
+
+When `run` encounters a URL with a remote adapter, it auto-downloads to `adapters/` and executes — no manual setup needed.
+
 ### Check what's available for a URL
 
 ```bash
@@ -92,10 +96,10 @@ node scripts/adapter-runner.mjs check "https://feishu.cn/wiki/xxx"
 # {"level":"adapter","name":"feishu",...}
 
 node scripts/adapter-runner.mjs check "https://xiaohongshu.com/explore/xxx"
-# {"level":"hint","domain":"xiaohongshu.com",...}
+# {"level":"adapter","name":"xiaohongshu",...}   (code adapter takes priority over hint)
 
-node scripts/adapter-runner.mjs check "https://example.com"
-# {"level":"none"}
+node scripts/adapter-runner.mjs check "https://unknown-site.com"
+# {"level":"remote","name":"...",...}   or   {"level":"none"}
 ```
 
 ### Run a code adapter
@@ -158,14 +162,18 @@ updated: 2026-04-06
 
 ```
 SKILL.md              Agent strategy prompt (browsing philosophy, tool selection)
+registry.json         Remote adapter registry (auto-download index)
 scripts/
-  cdp-proxy.mjs       HTTP → Chrome CDP bridge (19 endpoints)
+  cdp-proxy.mjs       HTTP → Chrome CDP bridge (20 endpoints)
   check-deps.mjs      Environment check + proxy auto-start
-  adapter-runner.mjs   Three-tier matcher: .mjs adapter → .md hint → generic
+  adapter-runner.mjs   Four-tier matcher + remote download
 adapters/
-  feishu.mjs          Code adapter (window.DATA extraction)
-  xiaohongshu.md      Prompt hint (platform patterns + pitfalls)
+  _utils.mjs          Shared utilities (sleep, downloadFile, scrollToLoad)
   _template.mjs       Adapter template
+  feishu.mjs          Feishu docs (window.DATA extraction)
+  xiaohongshu.mjs     Xiaohongshu notes, profiles, feeds
+  xiaohongshu.md      Xiaohongshu prompt hint (patterns + pitfalls)
+  scys.mjs            生财有术 articles, opportunities, courses
 ```
 
 Design deep-dive: [docs/architecture.md](docs/architecture.md)

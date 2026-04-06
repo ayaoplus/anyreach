@@ -101,22 +101,25 @@ curl -s "http://localhost:3456/getCookies?target=ID&domain=x.com"    # 获取 Co
 node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" check "URL"
 ```
 
-返回三种层级：
+返回四种层级：
 
 | level | 含义 | 操作 |
 |-------|------|------|
-| `adapter` | 有代码适配器（.mjs） | `adapter-runner.mjs run "URL"` — 一步提取，结果确定 |
-| `hint` | 有经验提示（.md） | `adapter-runner.mjs hint "URL"` — 获取提示后用通用 CDP 模式操作 |
-| `none` | 无站点知识 | 直接用通用 CDP 模式（eval/click/scroll） |
+| `adapter` | 本地代码适配器（.mjs） | `adapter-runner.mjs run "URL"` — 一步提取 |
+| `hint` | 本地经验提示（.md） | `adapter-runner.mjs hint "URL"` — 获取提示后通用 CDP |
+| `remote` | 远程有适配器可下载 | `adapter-runner.mjs run "URL"` — 自动下载后提取 |
+| `none` | 无站点知识 | 直接通用 CDP 模式 |
+
+`run` 命令遇到 `remote` 时自动下载到本地，无需手动操作。
 
 ```bash
-# 其他命令
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" list           # 列出所有适配器和提示
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" run "URL"      # 运行代码适配器
-node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" hint "URL"     # 获取 .md 提示内容
+node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" list               # 列出本地适配器
+node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" run "URL"          # 运行（自动下载）
+node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" hint "URL"         # 获取 .md 提示
+node "$CLAUDE_SKILL_DIR/scripts/adapter-runner.mjs" download "URL"     # 手动下载远程适配器
 ```
 
-适配器失败时不要反复重试，直接降级到 hint 或通用模式。站点改版可能导致适配器失效。
+适配器失败时直接降级到 hint 或通用模式，不反复重试。
 
 ## 并行分治
 
