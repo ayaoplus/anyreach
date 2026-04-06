@@ -1,6 +1,6 @@
 # Crawler 设计方案
 
-## 状态：设计阶段，未开始开发
+## 状态：第一版已实现，待用户测试
 
 ## 核心思路
 
@@ -21,9 +21,9 @@ Crawler 不是一个 CLI 工具，而是 **anyreach agent 能力的自然延伸*
 ### 文件结构
 
 ```
-scripts/cdp-proxy.mjs      ← 不动，纯基础设施
-scripts/adapter-runner.mjs  ← 不动，纯提取逻辑
-scripts/crawler.mjs         ← 新增，crawl plan 执行器
+scripts/cdp-proxy.mjs      ← 小改：CDP_CHROME_PORT 环境变量 + /json/version WebSocket URL
+scripts/adapter-runner.mjs  ← 不动，纯提取逻辑（crawler 通过 import 复用 runAdapter）
+scripts/crawler.mjs         ← 新增，爬虫执行器（URL 列表 → 并发提取 → NDJSON）
 lib/browser-provider.mjs    ← 新增，浏览器实例管理（双模式抽象）
 ```
 
@@ -174,15 +174,17 @@ async function createBrowser(opts) {
 
 ```
 Crawler 启动
-  → 连接用户 Chrome（通过现有 CDP Proxy）
-  → Network.getAllCookies() 导出所有 cookie
-  → 断开与用户 Chrome 的连接
-  → 启动 managed Chrome 实例
-  → Network.setCookies() 注入 cookie
+  → 启动 managed Chrome + CDP Proxy
+  → 在用户 Chrome proxy 上开临时 tab（about:blank）
+  → Network.getAllCookies() 导出所有 cookie（session 级命令，返回浏览器全量 cookie）
+  → 关闭临时 tab
+  → 在 managed Chrome proxy 上开临时 tab
+  → 逐个 Network.setCookie() 注入 cookie
+  → 关闭临时 tab
   → 开始爬取
 ```
 
-注意：是**串行**的，先导出再注入，不需要同时连接两个 Chrome。
+注意：是**串行**的，先导出再注入。使用临时 tab + session 级 CDP 命令，不需要浏览器级别的命令通道。
 
 ### --copy-cookies 默认值：auto
 
@@ -304,12 +306,21 @@ Agent 生成 crawl plan
 
 ## 迭代计划
 
-### 第一版：能跑
+### 第一版：能跑 ✅ 已实现
 
 - crawler.mjs 基础框架：接收 URL 列表，并发提取，NDJSON 输出
-- managed mode + browser-provider
-- cookie auto 移植
-- 基础参数（concurrency, delay, timeout, retry）
+- managed mode + browser-provider（返回 proxyBase/proxyPort）
+- cookie auto 移植（Network.getAllCookies → Network.setCookie）
+- 基础参数（concurrency, delay, timeout, retry, output, headless, user-data-dir, copy-cookies）
+- 无 adapter 时 fallback 到 extractText
+- SIGINT/SIGTERM 优雅退出 + 进程清理
+
+**用法：**
+```bash
+node scripts/crawler.mjs --urls urls.txt [--concurrency 3] [--delay 1000] \
+  [--timeout 30000] [--retry 2] [--mode managed] [--no-headless] \
+  [--user-data-dir /path] [--copy-cookies auto] [--output results.ndjson]
+```
 
 ### 第二版：可靠
 
