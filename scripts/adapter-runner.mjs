@@ -188,16 +188,21 @@ function loadHints() {
 // --- 远程注册表 ---
 
 let _registryCache = null;
+let _registryCacheTime = 0;
+const REGISTRY_TTL = 10 * 60 * 1000; // 10 minutes
 
 async function fetchRegistry() {
-  if (_registryCache) return _registryCache;
+  if (_registryCache && (Date.now() - _registryCacheTime) < REGISTRY_TTL) {
+    return _registryCache;
+  }
   try {
     const res = await fetch(REGISTRY_URL, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return null;
+    if (!res.ok) return _registryCache; // return stale cache on fetch failure
     _registryCache = await res.json();
+    _registryCacheTime = Date.now();
     return _registryCache;
   } catch {
-    return null;
+    return _registryCache; // return stale cache on network error
   }
 }
 
