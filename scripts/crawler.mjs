@@ -10,12 +10,8 @@
  */
 
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createBrowser } from '../lib/browser-provider.mjs';
-import { runAdapter, checkUrl } from './adapter-runner.mjs';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { runAdapter } from './adapter-runner.mjs';
 
 // --- 参数解析 ---
 function parseArgs() {
@@ -178,7 +174,7 @@ function withTimeout(promise, ms, url) {
 }
 
 // --- extractText fallback（无 adapter 时使用） ---
-async function fallbackExtract(url, proxyBase, timeoutMs) {
+async function fallbackExtract(url, proxyBase) {
   const { targetId } = await proxyFetch(proxyBase, '/new?url=' + encodeURIComponent(url));
 
   try {
@@ -328,7 +324,7 @@ async function main() {
           if (e.code === 'NO_ADAPTER') {
             try {
               const result = await withTimeout(
-                fallbackExtract(url, browser.proxyBase, opts.timeout),
+                fallbackExtract(url, browser.proxyBase),
                 opts.timeout,
                 url
               );
