@@ -223,11 +223,11 @@ export default {
 
 ## 已有适配器
 
-| 适配器 | 域名 | 能力 |
-|--------|------|------|
-| **feishu** | feishu.cn, larksuite.com | 知识库/云文档提取。通过 `window.DATA` block 数据 + Worker 拦截实现长文档完整提取。支持所有 block 类型（标题、列表、图片、表格、高亮块、引用等）输出 Markdown。[技术文档](docs/adapter-feishu.md) |
-| **xiaohongshu** | xiaohongshu.com, xhslink.com | 笔记（图文/视频）、用户主页、信息流。滚动加载、批量提取 |
-| **scys** | scys.com | 帖子详情、风向标列表（预览/归档两种模式）、航海项目、航海手册（逐章提取，输出 Markdown）。[技术文档](docs/adapter-scys.md) |
+| 适配器 | 域名 | 能力 | 文档 |
+|--------|------|------|------|
+| **feishu** | feishu.cn, larksuite.com | 知识库/云文档提取。通过 `window.DATA` block 数据 + Worker 拦截实现长文档完整提取。支持所有 block 类型（标题、列表、图片、表格、高亮块、引用等）输出 Markdown。 | [技术文档](docs/adapter-feishu.md) |
+| **xiaohongshu** | xiaohongshu.com, xhslink.com | 笔记（图文/视频）、用户主页、信息流。滚动加载、批量提取 | — |
+| **scys** | scys.com | 帖子详情、风向标列表（预览/归档两种模式）、航海项目、航海手册（逐章提取，输出 Markdown）。 | [技术文档](docs/adapter-scys.md) |
 
 
 ## 致谢
