@@ -149,24 +149,105 @@ const EXTRACT_COURSE_TOC_JS = `(() => {
 })()`;
 
 // --- 航海手册当前章节内容 ---
-// 精确提取 .vc-course-content 下的标题和正文，避免混入侧边栏
+// 遍历飞书文档 block 结构，直接在浏览器端转为 markdown
 const EXTRACT_COURSE_CONTENT_JS = `(() => {
   const courseContent = document.querySelector('.vc-course-content');
   if (!courseContent) {
-    // 回退到 .content-mt
     const mt = document.querySelector('.content-mt');
     if (!mt) return null;
-    const text = mt.innerText?.trim() || '';
-    return { text, imgs: [], videos: [], textLength: text.length };
+    return { markdown: mt.innerText?.trim() || '', imgs: [], videos: [], textLength: 0 };
   }
+
   const title = courseContent.querySelector('.content-title')?.innerText?.trim() || '';
   const docContent = courseContent.querySelector('.feishu-doc-content, .document-container');
-  const text = docContent?.innerText?.trim() || courseContent.innerText?.trim() || '';
-  const imgs = Array.from((docContent || courseContent).querySelectorAll('img'))
-    .map(i => i.src).filter(s => s && s.startsWith('http'));
-  const videos = Array.from((docContent || courseContent).querySelectorAll('video'))
-    .map(v => v.src || v.querySelector('source')?.src).filter(Boolean);
-  return { title, text, imgs, videos, textLength: text.length };
+  if (!docContent) return { markdown: title ? '# ' + title + '\\n' : '', imgs: [], videos: [], textLength: 0 };
+
+  const mdLines = [];
+  const imgs = [];
+  const videos = [];
+  const items = docContent.querySelectorAll('.vc-doc-item');
+
+  for (const item of items) {
+    const inner = item.querySelector(':scope > div');
+    if (!inner) continue;
+
+    // --- 标题 ---
+    const headerEl = inner.querySelector('.block-header');
+    if (headerEl) {
+      const levelEl = headerEl.querySelector('[class^=block]');
+      const levelClass = levelEl?.className || '';
+      // block4→h1, block5→h1, block6→h2, block7→h3, block8→h4, block9→h5
+      let level = 2;
+      const m = levelClass.match(/block(\\d+)/);
+      if (m) level = Math.max(1, Math.min(5, parseInt(m[1]) - 4));
+      const text = headerEl.innerText?.trim();
+      if (text) mdLines.push('#'.repeat(level) + ' ' + text);
+      mdLines.push('');
+      continue;
+    }
+
+    // --- 图片 ---
+    const imgEl = inner.querySelector('.block-image img');
+    if (imgEl) {
+      const src = imgEl.src;
+      if (src && src.startsWith('http')) {
+        imgs.push(src);
+        mdLines.push('![图片](' + src + ')');
+        mdLines.push('');
+      }
+      continue;
+    }
+
+    // --- 视频 ---
+    const videoEl = inner.querySelector('video');
+    if (videoEl) {
+      const src = videoEl.src || videoEl.querySelector('source')?.src;
+      if (src) videos.push(src);
+      continue;
+    }
+
+    // --- 列表项 ---
+    const bulletEl = inner.querySelector('.bullet_container');
+    if (bulletEl) {
+      const listText = bulletEl.querySelector('.list')?.innerText?.trim() || bulletEl.innerText?.replace(/^•\\s*/, '')?.trim();
+      if (listText) mdLines.push('- ' + _inlineMarkdown(bulletEl.querySelector('.list') || bulletEl));
+      continue;
+    }
+
+    // --- 普通文本段落 ---
+    const textEl = inner.querySelector('.block-text');
+    if (textEl) {
+      const text = textEl.innerText?.trim();
+      if (!text || textEl.querySelector('.text.blank')) {
+        // 空行
+        if (mdLines.length > 0 && mdLines[mdLines.length - 1] !== '') mdLines.push('');
+        continue;
+      }
+      mdLines.push(_inlineMarkdown(textEl));
+      mdLines.push('');
+      continue;
+    }
+  }
+
+  // 内联样式：加粗
+  function _inlineMarkdown(el) {
+    const spans = el.querySelectorAll(':scope span.text');
+    if (spans.length === 0) return el.innerText?.trim() || '';
+    let result = '';
+    for (const s of spans) {
+      const t = s.textContent || '';
+      if (!t || s.classList.contains('blank')) continue;
+      if (s.classList.contains('bold')) {
+        result += '**' + t + '**';
+      } else {
+        result += t;
+      }
+    }
+    return result.trim();
+  }
+
+  const markdown = mdLines.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+  return { markdown, imgs, videos, textLength: markdown.length };
 })()`;
 
 // (downloadFile and downloadMedia imported from _utils.mjs)
@@ -363,7 +444,7 @@ export default {
         section: plan.section,
         name: plan.name,
         meta: plan.meta,
-        text: content?.text || '',
+        markdown: content?.markdown || '',
         images: content?.imgs || [],
         videos: content?.videos || [],
         textLength: content?.textLength || 0,
