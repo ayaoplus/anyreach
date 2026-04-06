@@ -12,10 +12,7 @@
 //   手册侧边栏: .vc-course-sidebar → .catalogue-section → .vc-chapter-item
 //   手册内容:   .content-mt
 
-import fs from 'node:fs';
-import path from 'node:path';
-
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+import { sleep, downloadMedia, scrollToLoad } from './_utils.mjs';
 
 // =========================================================
 // JS extraction snippets (run inside browser via proxy.eval)
@@ -128,21 +125,7 @@ const EXTRACT_COURSE_CONTENT_JS = `(() => {
   return { text, imgs, videos, textLength: text.length };
 })()`;
 
-// =========================================================
-// Helper: download media files
-// =========================================================
-async function downloadFile(url, destPath) {
-  if (!url || url.startsWith('blob:')) return { error: 'blob URL' };
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return { error: `HTTP ${res.status}` };
-    const buffer = Buffer.from(await res.arrayBuffer());
-    fs.writeFileSync(destPath, buffer);
-    return { saved: destPath, size: buffer.length };
-  } catch (e) {
-    return { error: e.message };
-  }
-}
+// (downloadFile and downloadMedia imported from _utils.mjs)
 
 // =========================================================
 // Adapter export
@@ -204,22 +187,7 @@ export default {
       await sleep(1500);
     }
 
-    // scroll to load enough cards
-    let cards = [];
-    let scrollAttempts = 0;
-    while (cards.length < limit && scrollAttempts < 15) {
-      const current = await proxy.eval(targetId, EXTRACT_OPP_CARDS_JS);
-      if (current) cards = current;
-      if (cards.length >= limit) break;
-      await proxy.scroll(targetId, { direction: 'bottom' });
-      await sleep(1500);
-      scrollAttempts++;
-      const after = await proxy.eval(targetId, EXTRACT_OPP_CARDS_JS);
-      if (after && after.length <= cards.length) break;
-      if (after) cards = after;
-    }
-
-    cards = cards.slice(0, limit);
+    let cards = await scrollToLoad(proxy, targetId, { extractJS: EXTRACT_OPP_CARDS_JS, limit });
     if (bidOnly) cards = cards.filter(c => c.isBid);
 
     return { listType: 'opportunity', bidOnly: !!bidOnly, cards, cardCount: cards.length, format: 'json' };
@@ -230,22 +198,9 @@ export default {
     await proxy.waitFor(targetId, '.vc-navigation-card', 10000).catch(() => {});
     await sleep(1000);
 
-    // scroll to load more
-    let cards = [];
-    let scrollAttempts = 0;
-    while (cards.length < limit && scrollAttempts < 10) {
-      const current = await proxy.eval(targetId, EXTRACT_ACTIVITY_CARDS_JS);
-      if (current) cards = current;
-      if (cards.length >= limit) break;
-      await proxy.scroll(targetId, { direction: 'bottom' });
-      await sleep(1500);
-      scrollAttempts++;
-      const after = await proxy.eval(targetId, EXTRACT_ACTIVITY_CARDS_JS);
-      if (after && after.length <= cards.length) break;
-      if (after) cards = after;
-    }
+    const cards = await scrollToLoad(proxy, targetId, { extractJS: EXTRACT_ACTIVITY_CARDS_JS, limit, maxScrollAttempts: 10 });
 
-    return { listType: 'activity', cards: cards.slice(0, limit), cardCount: Math.min(cards.length, limit), format: 'json' };
+    return { listType: 'activity', cards, cardCount: cards.length, format: 'json' };
   },
 
   // --- 航海手册（逐章提取） ---
@@ -341,19 +296,12 @@ export default {
 
   // --- 下载手册中所有媒体 ---
   async downloadCourseMedia(courseResult, destDir) {
-    fs.mkdirSync(destDir, { recursive: true });
     const results = [];
     for (const ch of (courseResult.chapters || [])) {
-      const chDir = path.join(destDir, ch.name.replace(/[/\\:*?"<>|]/g, '_').slice(0, 50));
+      const chName = ch.name.replace(/[/\\:*?"<>|]/g, '_').slice(0, 50);
+      const chDir = `${destDir}/${chName}`;
       if (ch.images?.length > 0 || ch.videos?.length > 0) {
-        fs.mkdirSync(chDir, { recursive: true });
-      }
-      for (let i = 0; i < (ch.images || []).length; i++) {
-        const ext = ch.images[i].includes('.png') ? 'png' : 'jpg';
-        results.push(await downloadFile(ch.images[i], path.join(chDir, `img_${i + 1}.${ext}`)));
-      }
-      for (let i = 0; i < (ch.videos || []).length; i++) {
-        results.push(await downloadFile(ch.videos[i], path.join(chDir, `video_${i + 1}.mp4`)));
+        results.push(...await downloadMedia({ images: ch.images, videos: ch.videos }, chDir));
       }
     }
     return results;
