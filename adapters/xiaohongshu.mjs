@@ -3,6 +3,16 @@
 //   - note: 单篇笔记（图文 or 视频）
 //   - profile: 博主主页（笔记列表）
 //   - feed: 首页/搜索结果（笔记列表）
+//
+// Platform notes (fallback knowledge when adapter fails):
+//   - Heavy anti-scraping: static fetch/curl gets empty pages, must use CDP
+//   - Do NOT construct URLs manually — xsec_token is session-bound
+//   - Navigate to xiaohongshu.com and use the search bar via click+fill
+//   - User profile: click user avatar from a note, don't construct profile URLs
+//   - "Content not found" may be an access method issue, not actual deletion
+//   - Rapid tab opening (>5) may trigger rate limiting
+//   - creator.xiaohongshu.com has separate login state
+//   - Video uses MediaSource Extensions — video.src becomes blob: after playback
 
 import { sleep, downloadMedia, scrollToLoad } from './_utils.mjs';
 
