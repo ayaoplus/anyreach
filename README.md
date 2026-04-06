@@ -67,39 +67,104 @@ Agent 会加载 SKILL.md，选择合适的工具（WebSearch / WebFetch / Jina /
 
 所有浏览器操作通过本地 HTTP 代理 `localhost:3456` 完成。
 
-### 基础端点
+### 标签页管理
+
+| 端点 | 方法 | 参数 | 说明 |
+|------|------|------|------|
+| `/new` | GET | `url` — 目标 URL | 新建后台标签页，等待加载完成，返回 `{ targetId }` |
+| `/close` | GET | `target` — 标签页 ID | 关闭标签页 |
+| `/targets` | GET | 无 | 列出所有打开的标签页 |
+| `/health` | GET | 无 | 查看连接状态、会话数、Chrome 端口 |
 
 ```bash
-curl -s "http://localhost:3456/new?url=URL"                          # 新建后台标签页
-curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'JS'      # 执行 JavaScript
-curl -s -X POST "http://localhost:3456/click?target=ID" -d '.btn'   # JS 点击
-curl -s -X POST "http://localhost:3456/clickAt?target=ID" -d '.btn' # 真实鼠标点击
-curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"    # 滚动
-curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/s.png" # 截图
-curl -s "http://localhost:3456/close?target=ID"                      # 关闭标签页
+# 打开页面，拿到 targetId
+curl -s "http://localhost:3456/new?url=https://example.com"
+# → {"targetId":"ABC123"}
+
+# 用完关闭
+curl -s "http://localhost:3456/close?target=ABC123"
 ```
 
-### 增强端点
+### 页面交互
+
+| 端点 | 方法 | 参数 | 说明 |
+|------|------|------|------|
+| `/eval` | POST | `target`; body = JS 表达式 | 执行任意 JavaScript，支持 async/await |
+| `/click` | POST | `target`; body = CSS 选择器 | JS `el.click()`，覆盖大多数场景 |
+| `/clickAt` | POST | `target`; body = CSS 选择器 | 真实鼠标事件，可触发文件选择框 |
+| `/fill` | POST | `target`; body = `{ selector, value }` | 填写表单，兼容 React/Vue 响应式 |
+| `/scroll` | GET | `target`, `direction` (down/up/top/bottom), `y` | 滚动页面，等待 800ms 懒加载 |
 
 ```bash
-curl -s -X POST "http://localhost:3456/extractText?target=ID" \
-  -d '{"selector":".content","scroll":true}'                         # 自动滚动 + 提取文本
-curl -s -X POST "http://localhost:3456/fill?target=ID" \
-  -d '{"selector":"input","value":"text"}'                           # 填写表单（兼容 React/Vue）
-curl -s "http://localhost:3456/waitFor?target=ID&selector=.loaded"   # 等待元素出现
-curl -s -X POST "http://localhost:3456/setCookie?target=ID" \
-  -d '{"name":"k","value":"v","domain":".x.com","httpOnly":true}'    # 注入 Cookie
+# 执行 JS 获取标题
+curl -s -X POST "http://localhost:3456/eval?target=ABC123" -d 'document.title'
+
+# 点击按钮
+curl -s -X POST "http://localhost:3456/click?target=ABC123" -d '.submit-btn'
+
+# 填写搜索框
+curl -s -X POST "http://localhost:3456/fill?target=ABC123" \
+  -d '{"selector":"input[name=q]","value":"hello"}'
+
+# 滚到底部
+curl -s "http://localhost:3456/scroll?target=ABC123&direction=bottom"
 ```
 
-### 高级端点
+### 内容提取
+
+| 端点 | 方法 | 参数 | 说明 |
+|------|------|------|------|
+| `/extractText` | POST | `target`; body = `{ selector, scroll }` | 自动滚动容器 + 遍历 DOM 提取文本 |
+| `/screenshot` | GET | `target`, `file` — 保存路径 | 截图，可保存到文件或返回二进制 |
+| `/waitFor` | GET | `target`, `selector`, `timeout` | 等待元素出现（MutationObserver），超时返回 408 |
 
 ```bash
-curl -s -X POST "http://localhost:3456/cdp?target=ID" \
-  -d '{"method":"Network.enable","params":{}}'                       # 发送任意 CDP 命令
-curl -s "http://localhost:3456/wheel?target=ID&x=400&y=300&deltaY=500" # 真实滚轮事件
-curl -s -X POST "http://localhost:3456/events/start?target=ID" \
-  -d '{"filter":"Network","maxEvents":1000}'                         # 开始收集 CDP 事件
-curl -s "http://localhost:3456/events/get?id=COL_ID"                 # 获取收集到的事件
+# 滚动加载后提取文章内容
+curl -s -X POST "http://localhost:3456/extractText?target=ABC123" \
+  -d '{"selector":"article","scroll":true}'
+
+# 截图保存到本地
+curl -s "http://localhost:3456/screenshot?target=ABC123&file=/tmp/page.png"
+
+# 等待加载完成（最多 5 秒）
+curl -s "http://localhost:3456/waitFor?target=ABC123&selector=.loaded&timeout=5000"
+```
+
+### Cookie 管理
+
+| 端点 | 方法 | 参数 | 说明 |
+|------|------|------|------|
+| `/setCookie` | POST | `target`; body = Cookie JSON | 注入 Cookie，支持 HttpOnly |
+| `/getCookies` | GET | `target`, `domain`（可选） | 获取 Cookie，可按域名过滤 |
+
+```bash
+# 注入 Cookie
+curl -s -X POST "http://localhost:3456/setCookie?target=ABC123" \
+  -d '{"name":"token","value":"xxx","domain":".example.com","httpOnly":true}'
+```
+
+### 高级功能
+
+| 端点 | 方法 | 参数 | 说明 |
+|------|------|------|------|
+| `/cdp` | POST | `target`, `session`（可选）; body = `{ method, params }` | 发送任意 CDP 命令 |
+| `/wheel` | GET | `target`, `x`, `y`, `deltaY` | 真实滚轮手势，适用于虚拟列表 |
+| `/preScript` | POST | `target`; body = JS 代码 | 注入页面前置脚本，每次导航自动执行 |
+| `/adapter` | POST | `url` | 匹配 URL 对应的适配器并执行提取 |
+| `/events/start` | POST | `target`; body = `{ filter, maxEvents }` | 开始收集 CDP 事件 |
+| `/events/get` | GET | `id`, `clear`（可选） | 获取收集到的事件 |
+| `/events/stop` | GET | `id` | 停止并移除收集器 |
+
+```bash
+# 发送任意 CDP 命令
+curl -s -X POST "http://localhost:3456/cdp?target=ABC123" \
+  -d '{"method":"Network.enable","params":{}}'
+
+# 收集网络事件
+curl -s -X POST "http://localhost:3456/events/start?target=ABC123" \
+  -d '{"filter":"Network","maxEvents":500}'
+# → {"collectorId":"COL_1"}
+curl -s "http://localhost:3456/events/get?id=COL_1&clear=true"
 ```
 
 完整参考：[docs/architecture.md](docs/architecture.md)
@@ -154,37 +219,9 @@ export default {
 
 | 适配器 | 域名 | 能力 |
 |--------|------|------|
-| **feishu** | feishu.cn, larksuite.com | 知识库/云文档提取。通过 `window.DATA` block 数据 + Worker 拦截实现长文档完整提取。支持所有 block 类型（标题、列表、图片、表格、高亮块、引用等）输出 Markdown |
+| **feishu** | feishu.cn, larksuite.com | 知识库/云文档提取。通过 `window.DATA` block 数据 + Worker 拦截实现长文档完整提取。支持所有 block 类型（标题、列表、图片、表格、高亮块、引用等）输出 Markdown。[技术文档](docs/adapter-feishu.md) |
 | **xiaohongshu** | xiaohongshu.com, xhslink.com | 笔记（图文/视频）、用户主页、信息流。滚动加载、批量提取 |
-| **scys** | scys.com | 帖子详情、风向标列表（预览/归档两种模式）、航海项目、航海手册（逐章提取，输出 Markdown） |
-
-## 项目结构
-
-```
-SKILL.md              Agent 策略提示词（浏览哲学、工具选择）
-registry.json         远程适配器注册表（自动下载索引）
-scripts/
-  cdp-proxy.mjs       HTTP → Chrome CDP 桥接（24+ 端点）
-  check-deps.mjs      环境检查 + proxy 自动启动
-  adapter-runner.mjs   四层匹配器 + 远程下载
-  install.mjs         安装脚本（创建符号链接）
-adapters/
-  _utils.mjs          共享工具（sleep, downloadFile, scrollToLoad）
-  _template.mjs       适配器模板
-  feishu.mjs          飞书知识库/云文档（window.DATA + Worker block 补全）
-  xiaohongshu.mjs     小红书笔记、主页、信息流
-  scys.mjs            生财有术帖子、风向标、航海手册
-docs/
-  architecture.md     整体架构设计
-  adapter-feishu.md   飞书适配器技术文档
-  adapter-scys.md     生财有术适配器技术文档
-  crawler-design.md   爬虫功能设计（规划中）
-```
-
-### 适配器技术文档
-
-- [飞书适配器](docs/adapter-feishu.md) — block 数据提取原理、长文档 Worker 拦截机制、原生表格解析、block 类型完整映射表
-- [生财有术适配器](docs/adapter-scys.md) — 四种页面类型路由、风向标归档模式（分页+中标筛选）、航海手册逐章 Markdown 提取
+| **scys** | scys.com | 帖子详情、风向标列表（预览/归档两种模式）、航海项目、航海手册（逐章提取，输出 Markdown）。[技术文档](docs/adapter-scys.md) |
 
 ## 致谢
 
