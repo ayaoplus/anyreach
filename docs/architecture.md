@@ -39,7 +39,7 @@ AnyReach keeps the core insight (connect to the user's daily Chrome via CDP, sha
 
 **Layer 1 — Strategy (SKILL.md)**: Tells the agent *how to think* about web tasks. Tool selection matrix, browsing philosophy, failure handling. ~136 lines, no site-specific logic.
 
-**Layer 2 — Infrastructure (CDP Proxy)**: Generic browser automation over HTTP. 20 endpoints, zero site-specific code. Any agent that can `curl` can use it.
+**Layer 2 — Infrastructure (CDP Proxy)**: Generic browser automation over HTTP. 24+ endpoints (including `/cdp` for arbitrary CDP commands, `/events/*` for event collection, `/wheel` for real scroll gestures), zero site-specific code. Any agent that can `curl` can use it.
 
 **Layer 3 — Knowledge (Site Adapters + Hints)**: Per-domain extraction logic. Code adapters (`.mjs`) provide deterministic extraction. Prompt hints (`.md`) provide site patterns and pitfalls for LLM-guided exploration. Shared utilities (`_utils.mjs`) eliminate duplication.
 
@@ -79,7 +79,7 @@ check-deps.mjs
 
 Pages can detect automation by probing the Chrome debug port (`fetch('http://127.0.0.1:9222')`). The proxy intercepts these via `Fetch.requestPaused` and returns `ConnectionRefused`, making the debug port invisible to page JavaScript.
 
-### Endpoints (20 total)
+### Endpoints (24+ total)
 
 #### Tab management
 
@@ -130,6 +130,16 @@ Pages can detect automation by probing the Chrome debug port (`fetch('http://127
 |----------|--------|------|-------------|
 | `/preScript?target=` | POST | JS code | Inject script via `Page.addScriptToEvaluateOnNewDocument`. Runs before page JS on every navigation. Used for intercepting MediaSource, autoplay, etc. |
 | `/adapter?url=` | POST | — | Match URL to site adapter and run extraction. Auto-downloads from registry if needed. Returns structured content or 404 |
+
+#### CDP pass-through & event collection
+
+| Endpoint | Method | Body | Description |
+|----------|--------|------|-------------|
+| `/cdp?target=` | POST | `{ method, params }` | Send arbitrary CDP command. Optional `session=` query param for Worker targets |
+| `/wheel?target=&x=&y=&deltaY=` | GET | — | Real scroll gesture via `Input.synthesizeScrollGesture`. For virtual lists where `window.scrollBy` doesn't work |
+| `/events/start?target=` | POST | `{ filter, maxEvents }` | Start collecting CDP events. Returns `{ collectorId }` |
+| `/events/get?id=` | GET | — | Get collected events. Optional `clear=true` to drain |
+| `/events/stop?id=` | GET | — | Stop and remove collector |
 
 ### Session management
 
@@ -241,9 +251,9 @@ When `adapter-runner` finds no local match, it fetches the registry from GitHub,
 
 | Adapter | Domains | Capabilities |
 |---------|---------|-------------|
-| **feishu** | feishu.cn, larksuite.com | Wiki/docx extraction via `window.DATA` — bypasses canvas virtualization |
+| **feishu** | feishu.cn, larksuite.com | Wiki/docx full extraction via `window.DATA` block data + Worker CDP interception for long docs. Markdown output with all block types (headings, lists, images, native tables, callouts, quotes, code). See [adapter-feishu.md](adapter-feishu.md) |
 | **xiaohongshu** | xiaohongshu.com, xhslink.com | Notes (image+text, video+text), profiles, feeds. Scroll-to-load, batch extraction |
-| **scys** | scys.com | Articles, 风向标 (with bid filter), 航海 projects, course manuals (multi-chapter) |
+| **scys** | scys.com | Articles, opportunities (list/archive modes with pagination + bid filter), activity projects, course manuals (chapter-by-chapter Markdown via Feishu SDK DOM). See [adapter-scys.md](adapter-scys.md) |
 
 ## SKILL.md Design
 

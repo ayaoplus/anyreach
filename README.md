@@ -1,144 +1,148 @@
+[English](README_EN.md)
+
 # AnyReach
 
-Intelligent web access for AI agents. CDP browser automation with a three-tier site knowledge system.
+AI Agent 的智能联网工具。基于 CDP 浏览器自动化，配合站点适配器系统，实现确定性内容提取。
 
-## What it does
+## 它做什么
 
-AnyReach connects your AI agent (Claude Code, Codex, OpenClaw) to your daily Chrome browser. The agent operates in background tabs — sharing your login state, invisible to anti-bot detection, and never stealing your browser focus.
+AnyReach 将你的 AI Agent（Claude Code、Codex、OpenClaw）连接到你日常使用的 Chrome 浏览器。Agent 在后台标签页中操作——共享你的登录状态，对反爬检测不可见，不会抢占你的浏览器焦点。
 
-Three-tier site knowledge:
+三层站点知识体系：
 
-| Tier | Mechanism | Token cost | When to use |
-|------|-----------|------------|-------------|
-| **Adapter** (.mjs) | Deterministic code extraction | Zero | Sites with known internal APIs (e.g., Feishu's `window.DATA`) |
-| **Hint** (.md) | Prompt-based experience for the LLM | Low | Sites with known patterns but too complex for a fixed script |
-| **Generic** | Agent writes JS on the fly via `/eval` | High | Unknown sites, one-off tasks |
+| 层级 | 机制 | Token 消耗 | 适用场景 |
+|------|------|-----------|---------|
+| **代码适配器** (.mjs) | 确定性代码提取 | 零 | 有已知内部 API 的站点（如飞书的 `window.DATA`） |
+| **提示文件** (.md) | 基于 prompt 的经验指引 | 低 | 有已知模式但不适合写固定脚本的站点 |
+| **通用模式** | Agent 通过 `/eval` 实时编写 JS | 高 | 未知站点、一次性任务 |
 
-## Install
+## 安装
 
-**Let your agent install it:**
+**让 Agent 自动安装：**
 
 ```
 Install this skill: https://github.com/ayaoplus/anyreach
 ```
 
-**Manual install (all agents):**
+**手动安装：**
 
 ```bash
 git clone https://github.com/ayaoplus/anyreach ~/anyreach
 node ~/anyreach/scripts/install.mjs
 ```
 
-This creates symlinks for all supported agents:
+安装会创建符号链接：
 - `~/.claude/skills/anyreach` → Claude Code
 - `~/.agents/skills/anyreach` → Codex + OpenClaw
 
-One copy, shared `SKILL.md`, all three agents can load it.
+一份代码，共享 `SKILL.md`，所有 Agent 都能加载。
 
-### Prerequisites
+### 前置条件
 
-- **Node.js 22+** (uses native WebSocket)
-- **Chrome** with remote debugging enabled:
-  1. Open `chrome://inspect/#remote-debugging`
-  2. Check **"Allow remote debugging for this browser instance"**
-  3. Restart Chrome if needed
+- **Node.js 22+**（使用原生 WebSocket）
+- **Chrome** 开启远程调试：
+  1. 打开 `chrome://inspect/#remote-debugging`
+  2. 勾选 **"Allow remote debugging for this browser instance"**
+  3. 如需要，重启 Chrome
 
-### Verify
+### 验证
 
 ```bash
 node ~/anyreach/scripts/check-deps.mjs
-# Expected: node: ok, chrome: ok, proxy: ready
+# 预期输出: node: ok, chrome: ok, proxy: ready
 ```
 
-## Usage
+## 使用方式
 
-Once installed, tell your agent to do web tasks:
+安装后，直接对 Agent 说：
 
-- *"Read this page: [URL]"*
-- *"Search for X on Xiaohongshu"*
-- *"Extract content from this Feishu doc"*
-- *"Research these 5 competitors in parallel"*
+- *"读取这个页面：[URL]"*
+- *"搜索小红书上的 X"*
+- *"提取这个飞书文档的内容"*
+- *"并行调研这 5 个竞品"*
 
-The agent loads SKILL.md, selects the right tool (WebSearch / WebFetch / Jina / CDP), and handles the rest.
+Agent 会加载 SKILL.md，选择合适的工具（WebSearch / WebFetch / Jina / CDP），自动完成任务。
 
 ## CDP Proxy API
 
-All browser operations go through a local HTTP proxy at `localhost:3456`.
+所有浏览器操作通过本地 HTTP 代理 `localhost:3456` 完成。
 
-### Core endpoints
+### 基础端点
 
 ```bash
-curl -s "http://localhost:3456/new?url=URL"                          # Open background tab
-curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'JS'      # Execute JavaScript
-curl -s -X POST "http://localhost:3456/click?target=ID" -d '.btn'   # Click element
-curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"    # Scroll
-curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/s.png" # Screenshot
-curl -s "http://localhost:3456/close?target=ID"                      # Close tab
+curl -s "http://localhost:3456/new?url=URL"                          # 新建后台标签页
+curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'JS'      # 执行 JavaScript
+curl -s -X POST "http://localhost:3456/click?target=ID" -d '.btn'   # JS 点击
+curl -s -X POST "http://localhost:3456/clickAt?target=ID" -d '.btn' # 真实鼠标点击
+curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"    # 滚动
+curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/s.png" # 截图
+curl -s "http://localhost:3456/close?target=ID"                      # 关闭标签页
 ```
 
-### Enhanced endpoints (beyond web-access)
+### 增强端点
 
 ```bash
 curl -s -X POST "http://localhost:3456/extractText?target=ID" \
-  -d '{"selector":".content","scroll":true}'                         # Auto-scroll + extract text
+  -d '{"selector":".content","scroll":true}'                         # 自动滚动 + 提取文本
 curl -s -X POST "http://localhost:3456/fill?target=ID" \
-  -d '{"selector":"input","value":"text"}'                           # Fill form (React/Vue compatible)
-curl -s "http://localhost:3456/waitFor?target=ID&selector=.loaded"   # Wait for element (MutationObserver)
+  -d '{"selector":"input","value":"text"}'                           # 填写表单（兼容 React/Vue）
+curl -s "http://localhost:3456/waitFor?target=ID&selector=.loaded"   # 等待元素出现
 curl -s -X POST "http://localhost:3456/setCookie?target=ID" \
-  -d '{"name":"k","value":"v","domain":".x.com","httpOnly":true}'    # Inject HttpOnly cookie
+  -d '{"name":"k","value":"v","domain":".x.com","httpOnly":true}'    # 注入 Cookie
 ```
 
-Full reference: [docs/architecture.md](docs/architecture.md)
+### 高级端点
 
-## Adapter system
+```bash
+curl -s -X POST "http://localhost:3456/cdp?target=ID" \
+  -d '{"method":"Network.enable","params":{}}'                       # 发送任意 CDP 命令
+curl -s "http://localhost:3456/wheel?target=ID&x=400&y=300&deltaY=500" # 真实滚轮事件
+curl -s -X POST "http://localhost:3456/events/start?target=ID" \
+  -d '{"filter":"Network","maxEvents":1000}'                         # 开始收集 CDP 事件
+curl -s "http://localhost:3456/events/get?id=COL_ID"                 # 获取收集到的事件
+```
 
-Four-tier resolution: local adapter → local hint → remote registry → generic CDP.
+完整参考：[docs/architecture.md](docs/architecture.md)
 
-When `run` encounters a URL with a remote adapter, it auto-downloads to `adapters/` and executes — no manual setup needed.
+## 适配器系统
 
-### Check what's available for a URL
+四层解析：本地代码适配器 → 本地提示文件 → 远程注册表 → 通用 CDP 模式。
+
+遇到远程适配器时自动下载到 `adapters/` 并执行，无需手动配置。
+
+### 查看 URL 匹配情况
 
 ```bash
 node scripts/adapter-runner.mjs check "https://feishu.cn/wiki/xxx"
 # {"level":"adapter","name":"feishu",...}
 
-node scripts/adapter-runner.mjs check "https://xiaohongshu.com/explore/xxx"
-# {"level":"adapter","name":"xiaohongshu",...}   (code adapter takes priority over hint)
-
 node scripts/adapter-runner.mjs check "https://unknown-site.com"
-# {"level":"remote","name":"...",...}   or   {"level":"none"}
+# {"level":"none"}
 ```
 
-### Run a code adapter
+### 运行适配器
 
 ```bash
 node scripts/adapter-runner.mjs run "https://feishu.cn/wiki/xxx"
-# Returns structured JSON with title, content, metadata
+# 返回结构化 JSON（title, content, metadata）
 ```
 
-### Get a hint
+### 编写自己的适配器
 
-```bash
-node scripts/adapter-runner.mjs hint "https://xiaohongshu.com/explore/xxx"
-# Returns .md content with platform patterns, pitfalls, effective strategies
-```
-
-### Write your own adapter
-
-**Code adapter** — copy `adapters/_template.mjs`:
+复制 `adapters/_template.mjs`：
 
 ```javascript
 export default {
   name: 'mysite',
   domains: ['mysite.com'],
-  description: 'Extract articles from mysite',
+  description: '从 mysite 提取文章',
 
   detect(url) {
     if (url.includes('/post/')) return 'post';
     return 'default';
   },
 
-  async extract(proxy, targetId, /* ctx */) {
+  async extract(proxy, targetId, ctx) {
     const title = await proxy.eval(targetId, 'document.title');
     const { text } = await proxy.extractText(targetId, { selector: 'article' });
     return { title, content: text, format: 'text' };
@@ -146,58 +150,46 @@ export default {
 };
 ```
 
-**Hint file** — create `adapters/mysite.md`:
+## 已有适配器
 
-```markdown
----
-domain: mysite.com
-aliases: [ms, MySite]
-updated: 2026-04-06
----
+| 适配器 | 域名 | 能力 |
+|--------|------|------|
+| **feishu** | feishu.cn, larksuite.com | 知识库/云文档提取。通过 `window.DATA` block 数据 + Worker 拦截实现长文档完整提取。支持所有 block 类型（标题、列表、图片、表格、高亮块、引用等）输出 Markdown |
+| **xiaohongshu** | xiaohongshu.com, xhslink.com | 笔记（图文/视频）、用户主页、信息流。滚动加载、批量提取 |
+| **scys** | scys.com | 帖子详情、风向标列表（预览/归档两种模式）、航海项目、航海手册（逐章提取，输出 Markdown） |
 
-## Platform characteristics
-...
-
-## Effective patterns
-...
-
-## Known pitfalls
-...
-```
-
-## Architecture
+## 项目结构
 
 ```
-SKILL.md              Agent strategy prompt (browsing philosophy, tool selection)
-registry.json         Remote adapter registry (auto-download index)
+SKILL.md              Agent 策略提示词（浏览哲学、工具选择）
+registry.json         远程适配器注册表（自动下载索引）
 scripts/
-  cdp-proxy.mjs       HTTP → Chrome CDP bridge (20+ endpoints)
-  check-deps.mjs      Environment check + proxy auto-start
-  adapter-runner.mjs   Four-tier matcher + remote download
+  cdp-proxy.mjs       HTTP → Chrome CDP 桥接（24+ 端点）
+  check-deps.mjs      环境检查 + proxy 自动启动
+  adapter-runner.mjs   四层匹配器 + 远程下载
+  install.mjs         安装脚本（创建符号链接）
 adapters/
-  _utils.mjs          Shared utilities (sleep, downloadFile, scrollToLoad)
-  _template.mjs       Adapter template
-  feishu.mjs          Feishu wiki/docx (window.DATA + Worker block fetch)
-  xiaohongshu.mjs     Xiaohongshu notes, profiles, feeds
-  scys.mjs            生财有术 articles, opportunities, courses
+  _utils.mjs          共享工具（sleep, downloadFile, scrollToLoad）
+  _template.mjs       适配器模板
+  feishu.mjs          飞书知识库/云文档（window.DATA + Worker block 补全）
+  xiaohongshu.mjs     小红书笔记、主页、信息流
+  scys.mjs            生财有术帖子、风向标、航海手册
 docs/
-  architecture.md     Overall design deep-dive
-  adapter-feishu.md   飞书适配器技术文档（block 类型映射、长文档分片加载）
-  adapter-scys.md     生财有术适配器技术文档（页面类型、DOM 选择器、归档模式）
-  crawler-design.md   Crawler design (planned)
+  architecture.md     整体架构设计
+  adapter-feishu.md   飞书适配器技术文档
+  adapter-scys.md     生财有术适配器技术文档
+  crawler-design.md   爬虫功能设计（规划中）
 ```
 
-Design deep-dive: [docs/architecture.md](docs/architecture.md)
+### 适配器技术文档
 
-### Adapter documentation
+- [飞书适配器](docs/adapter-feishu.md) — block 数据提取原理、长文档 Worker 拦截机制、原生表格解析、block 类型完整映射表
+- [生财有术适配器](docs/adapter-scys.md) — 四种页面类型路由、风向标归档模式（分页+中标筛选）、航海手册逐章 Markdown 提取
 
-- [飞书适配器](docs/adapter-feishu.md) — block 数据提取、长文档 Worker 拦截、表格解析、block 类型完整映射
-- [生财有术适配器](docs/adapter-scys.md) — 四种页面类型、风向标归档模式、航海手册逐章提取
+## 致谢
 
-## Credits
+架构灵感来自 [web-access](https://github.com/eze-is/web-access)（作者：一泽 Eze）。AnyReach 在 web-access 的基础上增加了适配器系统、增强的 CDP 端点和 Worker 级别的数据拦截能力。
 
-Architecture inspired by [web-access](https://github.com/eze-is/web-access) by 一泽 Eze. AnyReach diverges from web-access by adding the adapter system and enhanced CDP endpoints.
-
-## License
+## 许可证
 
 MIT
