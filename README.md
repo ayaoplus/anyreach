@@ -171,18 +171,28 @@ updated: 2026-04-06
 SKILL.md              Agent strategy prompt (browsing philosophy, tool selection)
 registry.json         Remote adapter registry (auto-download index)
 scripts/
-  cdp-proxy.mjs       HTTP → Chrome CDP bridge (20 endpoints)
+  cdp-proxy.mjs       HTTP → Chrome CDP bridge (20+ endpoints)
   check-deps.mjs      Environment check + proxy auto-start
   adapter-runner.mjs   Four-tier matcher + remote download
 adapters/
   _utils.mjs          Shared utilities (sleep, downloadFile, scrollToLoad)
   _template.mjs       Adapter template
-  feishu.mjs          Feishu docs (window.DATA extraction)
-  xiaohongshu.mjs     Xiaohongshu notes, profiles, feeds (platform notes in header)
+  feishu.mjs          Feishu wiki/docx (window.DATA + Worker block fetch)
+  xiaohongshu.mjs     Xiaohongshu notes, profiles, feeds
   scys.mjs            生财有术 articles, opportunities, courses
+docs/
+  architecture.md     Overall design deep-dive
+  adapter-feishu.md   飞书适配器技术文档（block 类型映射、长文档分片加载）
+  adapter-scys.md     生财有术适配器技术文档（页面类型、DOM 选择器、归档模式）
+  crawler-design.md   Crawler design (planned)
 ```
 
 Design deep-dive: [docs/architecture.md](docs/architecture.md)
+
+### Adapter documentation
+
+- [飞书适配器](docs/adapter-feishu.md) — block 数据提取、长文档 Worker 拦截、表格解析、block 类型完整映射
+- [生财有术适配器](docs/adapter-scys.md) — 四种页面类型、风向标归档模式、航海手册逐章提取
 
 ## Credits
 
