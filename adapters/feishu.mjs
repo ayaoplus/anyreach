@@ -208,12 +208,27 @@ function blocksToMarkdown(allBlocks, rootId) {
         break;
       }
       case 'base_refer':
-        // 多维表格引用，标记跳过
+        // 多维表格引用
         lines.push(`${prefix}> 📊 *[多维表格引用]*`);
+        lines.push('');
+        break;
+      case 'sheet':
+        // 嵌入的电子表格
+        lines.push(`${prefix}> 📊 *[电子表格]*`);
         lines.push('');
         break;
       case 'isv':
         // 第三方应用块（如目录导航），跳过
+        break;
+      case 'file': {
+        // 附件文件
+        const fileName = block.data.file?.name || '附件';
+        lines.push(`${prefix}> 📎 *${fileName}*`);
+        lines.push('');
+        break;
+      }
+      case 'chat_card':
+        // 群聊卡片，跳过
         break;
       case 'table':
       case 'table_cell':
