@@ -5,6 +5,8 @@
 AI Agent 的智能联网工具。基于 CDP 浏览器自动化，配合站点适配器系统，实现确定性内容提取。
 
 
+---
+
 ## 它做什么
 
 AnyReach 将你的 AI Agent（Claude Code、Codex、OpenClaw）连接到你日常使用的 Chrome 浏览器。Agent 在后台标签页中操作——共享你的登录状态，对反爬检测不可见，不会抢占你的浏览器焦点。
@@ -17,6 +19,8 @@ AnyReach 将你的 AI Agent（Claude Code、Codex、OpenClaw）连接到你日�
 | **提示文件** (.md) | 基于 prompt 的经验指引 | 低 | 有已知模式但不适合写固定脚本的站点 |
 | **通用模式** | Agent 通过 `/eval` 实时编写 JS | 高 | 未知站点、一次性任务 |
 
+
+---
 
 ## 安装
 
@@ -55,6 +59,8 @@ node ~/anyreach/scripts/check-deps.mjs
 ```
 
 
+---
+
 ## 使用方式
 
 安装后，直接对 Agent 说：
@@ -66,6 +72,8 @@ node ~/anyreach/scripts/check-deps.mjs
 
 Agent 会加载 SKILL.md，选择合适的工具（WebSearch / WebFetch / Jina / CDP），自动完成任务。
 
+
+---
 
 ## CDP Proxy API
 
@@ -174,6 +182,8 @@ curl -s "http://localhost:3456/events/get?id=COL_1&clear=true"
 完整参考：[docs/architecture.md](docs/architecture.md)
 
 
+---
+
 ## 适配器系统
 
 四层解析：本地代码适配器 → 本地提示文件 → 远程注册表 → 通用 CDP 模式。
@@ -221,19 +231,31 @@ export default {
 ```
 
 
+---
+
 ## 已有适配器
 
-| 适配器 | 域名 | 能力 | 文档 |
-|--------|------|------|------|
-| **feishu** | feishu.cn, larksuite.com | 知识库/云文档提取。通过 `window.DATA` block 数据 + Worker 拦截实现长文档完整提取。支持所有 block 类型（标题、列表、图片、表格、高亮块、引用等）输出 Markdown。 | [技术文档](docs/adapter-feishu.md) |
-| **xiaohongshu** | xiaohongshu.com, xhslink.com | 笔记（图文/视频）、用户主页、信息流。滚动加载、批量提取 | — |
-| **scys** | scys.com | 帖子详情、风向标列表（预览/归档两种模式）、航海项目、航海手册（逐章提取，输出 Markdown）。 | [技术文档](docs/adapter-scys.md) |
+### feishu
 
+`feishu.cn` · `larksuite.com` — 知识库/云文档提取。通过 `window.DATA` block 数据 + Worker 拦截实现长文档完整提取。支持所有 block 类型（标题、列表、图片、表格、高亮块、引用等）输出 Markdown。→ [技术文档](docs/adapter-feishu.md)
+
+### xiaohongshu
+
+`xiaohongshu.com` · `xhslink.com` — 笔记（图文/视频）、用户主页、信息流。滚动加载、批量提取。
+
+### scys
+
+`scys.com` — 帖子详情、风向标列表（预览/归档两种模式）、航海项目、航海手册（逐章提取，输出 Markdown）。→ [技术文档](docs/adapter-scys.md)
+
+
+---
 
 ## 致谢
 
 架构灵感来自 [web-access](https://github.com/eze-is/web-access)（作者：一泽 Eze）。AnyReach 在 web-access 的基础上增加了适配器系统、增强的 CDP 端点和 Worker 级别的数据拦截能力。
 
+
+---
 
 ## 许可证
 
