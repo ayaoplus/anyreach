@@ -118,9 +118,21 @@ async function connect() {
     }
   }
 
-  const wsUrl = chromeWsPath
-    ? `ws://127.0.0.1:${chromePort}${chromeWsPath}`
-    : `ws://127.0.0.1:${chromePort}/devtools/browser`;
+  let wsUrl;
+  if (chromeWsPath) {
+    wsUrl = `ws://127.0.0.1:${chromePort}${chromeWsPath}`;
+  } else {
+    // 从 /json/version 获取完整的 WebSocket URL（headless Chrome 需要带 browser UUID）
+    try {
+      const resp = await fetch(`http://127.0.0.1:${chromePort}/json/version`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      const info = await resp.json();
+      wsUrl = info.webSocketDebuggerUrl || `ws://127.0.0.1:${chromePort}/devtools/browser`;
+    } catch {
+      wsUrl = `ws://127.0.0.1:${chromePort}/devtools/browser`;
+    }
+  }
 
   return connectingPromise = new Promise((resolve, reject) => {
     ws = new WS(wsUrl);
