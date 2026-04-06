@@ -24,6 +24,7 @@ function parseArgs() {
     retry: 2,             // 失败重试次数
     mode: 'managed',      // user | managed
     headless: true,       // managed mode 是否无头
+    userDataDir: null,    // managed mode 的 Chrome profile 目录
     copyCookies: 'auto',  // auto | true | false
     output: null,         // 输出文件路径（默认 stdout）
   };
@@ -38,6 +39,7 @@ function parseArgs() {
       case '--mode':        opts.mode = args[++i]; break;
       case '--headless':    opts.headless = args[i + 1] === 'false' ? (i++, false) : true; break;
       case '--no-headless': opts.headless = false; break;
+      case '--user-data-dir': opts.userDataDir = args[++i]; break;
       case '--copy-cookies': opts.copyCookies = args[++i]; break;
       case '--output':      opts.output = args[++i]; break;
       case '--help': case '-h': printUsage(); process.exit(0);
@@ -60,6 +62,7 @@ anyreach crawler v1
   --retry <n>              失败重试次数 (默认 2)
   --mode <user|managed>    浏览器模式 (默认 managed)
   --no-headless            显示浏览器窗口 (仅 managed mode)
+  --user-data-dir <path>   Chrome profile 目录 (仅 managed mode)
   --copy-cookies <auto|true|false>  Cookie 移植 (默认 auto)
   --output <file>          输出文件 (默认 stdout)
 `.trim());
@@ -235,6 +238,7 @@ async function main() {
   const browser = await createBrowser({
     mode: opts.mode,
     headless: opts.headless,
+    userDataDir: opts.userDataDir || undefined,
   });
 
   log(`浏览器就绪 (${browser.mode} mode, proxy port ${browser.proxyPort})`);
