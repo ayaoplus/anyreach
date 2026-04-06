@@ -1,0 +1,11 @@
+{
+  "name": "anyreach",
+  "description": "Intelligent web access for AI agents - CDP browser automation with site adapters",
+  "version": "0.1.0",
+  "author": {
+    "name": "Erik"
+  },
+  "license": "MIT",
+  "keywords": ["web", "browser", "cdp", "automation", "adapter"],
+  "skills": "./"
+}
