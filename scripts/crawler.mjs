@@ -97,18 +97,6 @@ async function proxyFetch(proxyBase, path, opts = {}) {
   return body;
 }
 
-// 通过 URL 匹配找到并关闭 tab（超时清理用）
-async function closeTabByUrl(proxyBase, url) {
-  try {
-    const targets = await proxyFetch(proxyBase, '/targets');
-    if (!Array.isArray(targets)) return;
-    for (const t of targets) {
-      if (t.url === url || t.url?.startsWith(url)) {
-        await proxyFetch(proxyBase, `/close?target=${t.targetId || t.id}`).catch(() => {});
-      }
-    }
-  } catch { /* 清理失败不中断 */ }
-}
 
 // --- Cookie 移植 ---
 async function transplantCookies(userProxyBase, managedProxyBase) {
@@ -335,12 +323,11 @@ async function main() {
         }
 
         try {
-          // 超时后主动关闭 URL 匹配的 tab（runAdapter 内部 finally 要等 promise 结束才执行）
+          // 超时后 runAdapter 内部 finally 会自行关闭 tab，极端卡死场景由 managed Chrome 关闭时兜底
           const result = await withTimeout(
             runAdapter(url, { proxyPort: browser.proxyPort }),
             opts.timeout,
             url,
-            () => closeTabByUrl(browser.proxyBase, url),
           );
 
           const record = {
