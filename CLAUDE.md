@@ -1,5 +1,11 @@
 # AnyReach - CLAUDE.md
 
+## Scope
+
+This file defines the shared repository rules for agents working in this repository.
+`CLAUDE.md` and `AGENTS.md` must stay aligned on repo-level instructions.
+When updating development philosophy, commit convention, coding rules, or architecture constraints, update both files in the same commit.
+
 ## Project Overview
 
 AnyReach is an intelligent web access skill for AI agents. It provides CDP browser automation with a site adapter system, forked from web-access's design philosophy but with a fundamentally different architecture.
@@ -37,6 +43,26 @@ adapter: add feishu wiki/docx extraction via window.DATA
 fix: handle background tab focus issue in selection API
 refactor: simplify adapter-runner module loading
 chore: update .gitignore
+```
+
+## Commit Workflow
+
+1. Make one logical change.
+2. Run the smallest effective verification that is feasible.
+3. Stage only the files required for that logical change.
+4. Commit immediately using the convention above.
+5. If multiple logical changes were completed, split them into multiple commits before pushing.
+6. If a later issue is found, use `git revert <commit>` so rollback stays explicit and recoverable.
+
+## Commit Template
+
+```text
+<type>: <concise imperative summary>
+
+Context: <optional background>
+Why: <optional reason>
+Validation: <optional verification>
+Rollback: git revert <commit>
 ```
 
 ## Architecture
