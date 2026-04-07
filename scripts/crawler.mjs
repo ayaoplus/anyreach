@@ -87,7 +87,27 @@ function readUrlList(filePath) {
 // --- 轻量 HTTP helper（不依赖 ProxyClient） ---
 async function proxyFetch(proxyBase, path, opts = {}) {
   const res = await fetch(`${proxyBase}${path}`, opts);
-  return res.json();
+  const body = await res.json();
+  // 服务端错误时抛出，让调用方的 catch 能感知
+  if (!res.ok && body.error) {
+    const err = new Error(body.error);
+    err.status = res.status;
+    throw err;
+  }
+  return body;
+}
+
+// 通过 URL 匹配找到并关闭 tab（超时清理用）
+async function closeTabByUrl(proxyBase, url) {
+  try {
+    const targets = await proxyFetch(proxyBase, '/targets');
+    if (!Array.isArray(targets)) return;
+    for (const t of targets) {
+      if (t.url === url || t.url?.startsWith(url)) {
+        await proxyFetch(proxyBase, `/close?target=${t.targetId || t.id}`).catch(() => {});
+      }
+    }
+  } catch { /* 清理失败不中断 */ }
 }
 
 // --- Cookie 移植 ---
@@ -186,32 +206,31 @@ function withTimeout(promise, ms, url, onTimeout) {
 // --- extractText fallback（无 adapter 时使用） ---
 async function fallbackExtract(url, proxyBase, timeoutMs) {
   const { targetId } = await proxyFetch(proxyBase, '/new?url=' + encodeURIComponent(url));
-
-  // 超时时强制关闭 tab，防止泄漏
   const closeTab = () => proxyFetch(proxyBase, `/close?target=${targetId}`).catch(() => {});
 
   try {
-    const doExtract = async () => {
-      await new Promise(r => setTimeout(r, 2000));
-      const info = await proxyFetch(proxyBase, `/info?target=${targetId}`);
-      const textResult = await proxyFetch(proxyBase, `/extractText?target=${targetId}`, {
-        method: 'POST',
-        body: JSON.stringify({ scroll: true }),
-      });
-      return {
-        adapter: 'none',
-        pageType: 'generic',
-        title: info.title || '',
-        url: info.url || url,
-        text: textResult.text || '',
-        length: textResult.length || 0,
-      };
-    };
-
-    return await withTimeout(doExtract(), timeoutMs, url, closeTab);
-  } catch (e) {
+    const result = await withTimeout(
+      (async () => {
+        await new Promise(r => setTimeout(r, 2000));
+        const info = await proxyFetch(proxyBase, `/info?target=${targetId}`);
+        const textResult = await proxyFetch(proxyBase, `/extractText?target=${targetId}`, {
+          method: 'POST',
+          body: JSON.stringify({ scroll: true }),
+        });
+        return {
+          adapter: 'none',
+          pageType: 'generic',
+          title: info.title || '',
+          url: info.url || url,
+          text: textResult.text || '',
+          length: textResult.length || 0,
+        };
+      })(),
+      timeoutMs, url, closeTab,
+    );
+    return result;
+  } finally {
     await closeTab();
-    throw e;
   }
 }
 
@@ -316,11 +335,12 @@ async function main() {
         }
 
         try {
-          // 先尝试 adapter 路径（runAdapter 内部有 finally close tab，超时后 tab 最终会关）
+          // 超时后主动关闭 URL 匹配的 tab（runAdapter 内部 finally 要等 promise 结束才执行）
           const result = await withTimeout(
             runAdapter(url, { proxyPort: browser.proxyPort }),
             opts.timeout,
             url,
+            () => closeTabByUrl(browser.proxyBase, url),
           );
 
           const record = {
