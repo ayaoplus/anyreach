@@ -252,7 +252,7 @@ crawler.mjs 不做任何"决策"，只负责可靠地执行 crawl plan。
 --urls <file>              URL 列表文件，每行一个
 --concurrency <n>          并发 worker 数，默认 3
 --delay <ms>               每次请求间隔，默认 1000
---timeout <ms>             单页超时，默认 30000
+--timeout <ms>             单页调度超时，默认 30000（见下方"超时语义"说明）
 --retry <n>                失败重试次数，默认 2
 --output <file>            输出文件，默认 stdout
 
@@ -273,6 +273,17 @@ crawler.mjs 不做任何"决策"，只负责可靠地执行 crawl plan。
 # 中断恢复
 --state-file <path>        状态文件，记录已完成 URL，支持断点续爬
 ```
+
+### 超时语义（已知限制）
+
+`--timeout` 是**调度层超时**，不是执行层取消。超时后 worker 立即返回错误并进入下一个 URL（或 retry），但底层的 `runAdapter()` / `fallbackExtract()` 仍在后台继续运行，直到其内部逻辑自然结束后由 finally 关闭 tab。
+
+这意味着：
+- retry 时可能存在上一次超时的 adapter 实例仍在后台运行，短暂叠加占用 tab
+- adapter 内部开的子 tab 也要等内部逻辑结束后才会释放
+- managed mode 下，job 结束关闭 Chrome 进程是最终兜底
+
+**V2 计划**：给 runAdapter 链路（ProxyClient → adapter extract）加 AbortSignal 支持，实现真正的执行层取消。见下方迭代计划。
 
 ---
 
@@ -324,6 +335,7 @@ node scripts/crawler.mjs --urls urls.txt [--concurrency 3] [--delay 1000] \
 
 ### 第二版：可靠
 
+- **runAdapter 支持 AbortSignal**：ProxyClient 所有 fetch 传递 signal，adapter extract() 接收 signal，超时时真正取消底层操作并立即释放 tab。这是将 --timeout 从"调度层超时"升级为"执行层取消"的前提。
 - state file 断点续爬
 - URL 去重 + include/exclude 过滤
 - --restart-after 进程重启
