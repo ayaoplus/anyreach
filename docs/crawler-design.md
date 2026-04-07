@@ -216,18 +216,22 @@ Cookie 是启动时快照式复制。Crawler 运行过程中不管怎么折腾�
 
 ## crawler.mjs — 纯执行器
 
-crawler.mjs 不做任何"决策"，只负责可靠地执行 crawl plan。
+crawler.mjs 不做任何"决策"，只负责可靠地执行爬取任务。
 
-| 模块 | 说明 |
-|------|------|
-| Plan 执行 | 按 step 顺序执行 crawl plan，前一步输出作为后一步输入 |
-| 并发池 | 控制同时运行的 worker 数量（默认 3） |
-| 节流 | 请求间隔、每域名限速 |
-| 重试与跳过 | 失败 N 次后跳过，记录失败 URL |
-| 去重 | URL 去重（默认）/ 内容哈希去重（可选） |
-| 进度与恢复 | state file 记录进度，支持断点续爬 |
-| 进程重启 | 跑完 N 个 URL 后重启 Chrome 进程，释放内存 |
-| 输出 | NDJSON 到 stdout，每行一个结果 |
+| 模块 | 说明 | V1 状态 |
+|------|------|---------|
+| 并发池 | 控制同时运行的 worker 数量（默认 3） | ✅ 已实现 |
+| 节流 | 请求间隔（--delay） | ✅ 已实现 |
+| 重试与跳过 | 失败 N 次后跳过，记录失败 URL | ✅ 已实现 |
+| 调度超时 | worker 层超时，非执行层取消 | ✅ 已实现（见超时语义说明） |
+| 无 adapter fallback | 无 adapter 时 fallback 到 extractText | ✅ 已实现 |
+| 输出 | NDJSON 到 stdout 或文件，每行一个结果 | ✅ 已实现 |
+| 信号处理 | SIGINT/SIGTERM 优雅退出 + 进程清理 | ✅ 已实现 |
+| Plan 执行 | 按 step 顺序执行 crawl plan | ❌ V3 |
+| 去重 | URL 去重 / 内容哈希去重 | ❌ V2 |
+| 进度与恢复 | state file 记录进度，支持断点续爬 | ❌ V2 |
+| 进程重启 | 跑完 N 个 URL 后重启 Chrome 进程 | ❌ V2 |
+| 每域名限速 | 单域名级别限速 | ❌ V2 |
 
 ### 并发语义
 
@@ -289,28 +293,41 @@ crawler.mjs 不做任何"决策"，只负责可靠地执行 crawl plan。
 
 ## 数据流
 
-### Managed Mode（默认）
+### V1 实际流程
+
+#### Managed Mode（默认）
 
 ```
-Agent 生成 crawl plan
+解析 CLI 参数 + 读取 URL 列表
+  → 启动 managed Chrome + CDP Proxy
+  → 检测用户 Chrome → cookie auto 移植（导出 → 注入）
+  → 并发池调度:
+      对每个 URL → runAdapter(url, { proxyPort })
+                  → 有 adapter? → adapter 提取
+                  → 无 adapter? → fallback extractText
+                  → 超时/失败? → 重试或记录错误
+                → 写 NDJSON 行
+                → sleep(delay)
+  → 全部完成 → 输出统计 → 关闭 managed Chrome
+```
+
+#### User Mode
+
+```
+解析 CLI 参数 + 读取 URL 列表
+  → 附着用户 Chrome（检测/自举 CDP Proxy）
+  → 并发池调度（同上，但使用用户浏览器）
+  → 完成（不关闭用户浏览器和 proxy）
+```
+
+### V3 目标流程（未实现）
+
+```
+用户自然语言描述任务
+  → Agent 生成 crawl plan（discover + extract steps）
   → 展示 plan，用户确认
-  → 检测用户 Chrome → cookie auto 移植
-  → 启动 managed Chrome + CDP Proxy → 注入 cookie
-  → 执行 plan steps:
-      discover: agent 收集 URL 列表
-      extract:  并发池调度 → 调用 adapter-runner（完整 adapter/hint/remote/none 分流）
-                           → 收集结果 → NDJSON 输出
-  → 全部完成 → 关闭 managed Chrome
-```
-
-### User Mode
-
-```
-Agent 生成 crawl plan
-  → 展示 plan，用户确认
-  → 附着用户 Chrome（通过 CDP Proxy）
-  → 执行 plan steps（同上，但使用用户浏览器）
-  → 完成（不关闭用户浏览器）
+  → crawler.mjs 按 plan 执行
+  → 全部完成
 ```
 
 ---

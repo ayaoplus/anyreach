@@ -82,6 +82,8 @@ SKILL.md          → Agent-facing strategy prompt
 - **window.DATA extraction for Feishu**: DOM/innerText/Selection API all fail due to canvas-level virtualized rendering. Feishu exposes full document data in `window.DATA.clientVars.data.block_map`. This is the only reliable extraction path.
 - **CDP Proxy over Playwright**: Direct connection to user's daily Chrome preserves login state, avoids detection, supports parallel background tabs.
 - **Adapter pattern**: Site-specific code is executable knowledge, not text hints. When an adapter exists, skip LLM-driven DOM exploration entirely.
+- **Dual browser mode for crawler**: User mode attaches to daily Chrome (login state), managed mode spawns isolated Chrome + CDP Proxy (clean, concurrent-safe). Cookie transplant bridges login state via `Network.getAllCookies` → `Network.setCookie`.
+- **Scheduling-level timeout**: Crawler `--timeout` is scheduling-level only — it unblocks the worker but does not cancel the underlying `runAdapter()`. Managed Chrome shutdown is the final cleanup. Execution-level cancel via AbortSignal is planned for V2.
 
 ## Coding Rules
 

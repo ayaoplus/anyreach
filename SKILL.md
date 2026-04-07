@@ -132,6 +132,30 @@ node "<anyreach_dir>/scripts/adapter-runner.mjs" download "URL"     # 手动下�
 - 所有并行任务共享一个 CDP Proxy，各自创建/关闭自己的 tab，无竞态
 - 并行任务需加载 anyreach skill 并遵循指引
 
+## 批量爬取（Crawler）
+
+需要批量提取多个 URL 时，使用 crawler 而非逐个手动操作：
+
+```bash
+# 准备 URL 列表文件（每行一个，# 开头为注释）
+node "<anyreach_dir>/scripts/crawler.mjs" --urls urls.txt
+
+# 常用参数
+--concurrency 3          # 并发 worker 数（默认 3）
+--delay 1000             # 请求间隔 ms（默认 1000）
+--timeout 30000          # 单页超时 ms（默认 30000）
+--retry 2                # 失败重试次数（默认 2）
+--mode managed           # managed（默认，独立 Chrome）或 user（用户 Chrome）
+--copy-cookies auto      # cookie 移植：auto（默认）/ true / false
+--output results.ndjson  # 输出文件（默认 stdout）
+--no-headless            # 显示浏览器窗口（调试用）
+```
+
+- 有 adapter 的 URL 自动走 adapter 提取，无 adapter 的 URL fallback 到通用 extractText
+- managed mode 默认启动独立 headless Chrome，通过 cookie 移植获取登录态
+- 输出 NDJSON 格式，每行一个 `{ url, status, adapter, data, error }`
+- 进度和日志输出到 stderr，不干扰 NDJSON 数据流
+
 ## 技术事实
 
 - 页面中存在大量已加载但未展示的内容（轮播、折叠区块、懒加载占位），DOM 中可直接触达
