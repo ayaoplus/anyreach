@@ -1,6 +1,7 @@
 // AnyReach X adapter
 // Supports:
 //   - home timeline
+//   - search timeline
 //   - profile timeline
 //   - list timeline
 //   - status tweet
@@ -14,6 +15,7 @@
 import { sleep } from './_utils.mjs';
 
 const TIMELINE_WAIT_SELECTOR = 'main [data-testid="primaryColumn"] article[data-testid="tweet"]';
+const SEARCH_WAIT_SELECTOR = 'main [data-testid="SearchBox_Search_Input"], main [role="tab"], main [data-testid="primaryColumn"] article[data-testid="tweet"], main [data-testid="primaryColumn"] [data-testid="UserCell"]';
 const PROFILE_WAIT_SELECTOR = 'main [data-testid="primaryColumn"] [data-testid="UserName"], main [data-testid="primaryColumn"] article[data-testid="tweet"]';
 const STATUS_WAIT_SELECTOR = 'main [data-testid="primaryColumn"] article[data-testid="tweet"], [data-testid="twitterArticleReadView"]';
 const PROFILE_TAB_PATHS = new Set(['with_replies', 'articles', 'media']);
@@ -154,6 +156,16 @@ function getTabs(root) {
       };
     })
     .filter(tab => tab.label);
+}
+
+function normalizeSearchMode(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw || raw === 'top') return 'top';
+  if (raw === 'live') return 'latest';
+  if (raw === 'user') return 'users';
+  if (raw === 'media') return 'media';
+  if (raw === 'list') return 'lists';
+  return raw;
 }
 
 function getStatusLinks(article) {
@@ -358,6 +370,25 @@ function extractHomeMeta() {
   return {
     tabs,
     selectedTab: tabs.find(tab => tab.selected)?.label || null,
+  };
+}
+
+function extractSearchMeta() {
+  const primary = document.querySelector('main [data-testid="primaryColumn"]') || document.querySelector('main') || document.body;
+  const params = new URLSearchParams(location.search);
+  const tabs = getTabs(primary);
+  const queryInput = document.querySelector('[data-testid="SearchBox_Search_Input"]');
+  const rawMode = params.get('f') || 'top';
+
+  return {
+    query: queryInput?.value || params.get('q') || '',
+    rawQuery: params.get('q') || '',
+    mode: normalizeSearchMode(rawMode),
+    rawMode,
+    url: location.href,
+    tabs,
+    selectedTab: tabs.find(tab => tab.selected)?.label || null,
+    selectedTabUrl: tabs.find(tab => tab.selected)?.url || null,
   };
 }
 
@@ -639,6 +670,418 @@ function extractLongformArticle(article) {
 }
 `;
 
+const BROWSER_SEARCH_API_JS = String.raw`
+function firstTruthy(...values) {
+  for (const value of values) {
+    if (value) return value;
+  }
+  return null;
+}
+
+function getReactRootFiber() {
+  const candidates = [document.querySelector('#react-root'), document.body, document.documentElement].filter(Boolean);
+  for (const node of candidates) {
+    for (const value of Object.values(node)) {
+      if (value && typeof value === 'object' && ('memoizedProps' in value || 'child' in value || 'memoizedState' in value)) {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+function getRuntimePropsFiber() {
+  const root = getReactRootFiber();
+  if (!root) return null;
+
+  let match = null;
+  const seen = new Set();
+
+  const walk = (fiber) => {
+    if (!fiber || seen.has(fiber) || match) return;
+    seen.add(fiber);
+    const props = fiber.memoizedProps;
+    if (props && props.store && props.featureSwitches) {
+      match = fiber;
+      return;
+    }
+    walk(fiber.child);
+    walk(fiber.sibling);
+  };
+
+  walk(root);
+  return match;
+}
+
+function getRuntimeContext() {
+  const fiber = getRuntimePropsFiber();
+  const store = fiber?.memoizedProps?.store || null;
+  const featureSwitches = fiber?.memoizedProps?.featureSwitches || null;
+  const state = store?.getState?.() || null;
+  if (!store || !state) return null;
+
+  let req = null;
+  if (typeof webpackChunk_twitter_responsive_web === 'undefined') {
+    return { store, featureSwitches, state, req: null, runtime: null, endpoint: null };
+  }
+
+  webpackChunk_twitter_responsive_web.push([[Symbol('probe')], {}, r => { req = r; }]);
+
+  const runtimeFactory = req?.(82953)?.T;
+  const endpointFactory = req?.(796205)?.Z;
+  if (typeof runtimeFactory !== 'function') {
+    return { store, featureSwitches, state, req, runtime: null, endpoint: null };
+  }
+
+  const loggedInUserId = firstTruthy(
+    state?.session?.user_id,
+    state?.session?.userId,
+    state?.session?.user?.id_str,
+    state?.session?.loggedInUserId
+  );
+
+  const runtime = runtimeFactory({
+    initialState: state,
+    originalStore: store,
+    loggedInUserId,
+  });
+
+  return {
+    store,
+    state,
+    req,
+    runtime,
+    featureSwitches: runtime?.featureSwitches || featureSwitches,
+    endpoint: runtime?.api?.withEndpoint && typeof endpointFactory === 'function'
+      ? runtime.api.withEndpoint(endpointFactory)
+      : null,
+  };
+}
+
+function searchProductFromMode(mode) {
+  const normalized = normalizeSearchMode(mode);
+  if (normalized === 'latest') return 'Latest';
+  if (normalized === 'media') return 'Media';
+  if (normalized === 'users') return 'People';
+  if (normalized === 'lists') return 'Lists';
+  return 'Top';
+}
+
+function normalizeSearchQuerySource(value) {
+  const raw = String(value || '').trim();
+  return raw || 'typed_query';
+}
+
+function unwrapTweetResult(result) {
+  if (!result) return null;
+  if (result.result) return unwrapTweetResult(result.result);
+  if (result.tweet) return unwrapTweetResult(result.tweet);
+  if (result.__typename === 'TweetWithVisibilityResults') return unwrapTweetResult(result.tweet);
+  if (/Tombstone|Unavailable/i.test(String(result.__typename || ''))) return null;
+  return result;
+}
+
+function unwrapUserResult(result) {
+  if (!result) return null;
+  if (result.result) return unwrapUserResult(result.result);
+  if (/Unavailable/i.test(String(result.__typename || ''))) return null;
+  return result;
+}
+
+function sliceDisplayText(text, range) {
+  if (!text) return '';
+  if (!Array.isArray(range) || range.length < 2) return text;
+  const chars = Array.from(String(text));
+  return chars.slice(range[0], range[1]).join('');
+}
+
+function extractSearchTweetText(tweet) {
+  const noteText = tweet?.note_tweet?.note_tweet_results?.result?.text
+    || tweet?.note_tweet?.note_tweet_results?.result?.note_tweet?.text
+    || '';
+  if (noteText) return noteText.trim();
+
+  const legacy = tweet?.legacy || {};
+  const ranged = sliceDisplayText(legacy.full_text || '', legacy.display_text_range);
+  return String(ranged || legacy.full_text || '').trim();
+}
+
+function normalizeSearchAuthor(user) {
+  const name = firstTruthy(user?.core?.name, user?.legacy?.name, '') || '';
+  const screenName = firstTruthy(user?.core?.screen_name, user?.legacy?.screen_name, '') || '';
+  const handle = screenName ? '@' + screenName.replace(/^@/, '') : '';
+  return {
+    name,
+    handle,
+    raw: [name, handle].filter(Boolean).join('\n'),
+  };
+}
+
+function buildSearchMetric(key, numeric) {
+  const value = Number(numeric || 0);
+  return {
+    key,
+    display: String(value),
+    numeric: value,
+    ariaLabel: '',
+  };
+}
+
+function normalizeSearchMedia(tweet) {
+  const mediaEntities = tweet?.legacy?.extended_entities?.media
+    || tweet?.legacy?.entities?.media
+    || [];
+
+  const images = dedupe(
+    mediaEntities
+      .filter(media => media?.type === 'photo')
+      .map(media => absoluteUrl(media.media_url_https || media.media_url || ''))
+      .filter(isImageUrl)
+  );
+
+  const videos = mediaEntities
+    .filter(media => media?.type === 'video' || media?.type === 'animated_gif')
+    .map(media => {
+      const variants = dedupe(
+        (media?.video_info?.variants || [])
+          .map(variant => absoluteUrl(variant?.url || ''))
+          .filter(Boolean)
+      );
+      const playable = dedupe(variants.filter(url => /m3u8|mp4/i.test(url)));
+      return {
+        poster: absoluteUrl(media.media_url_https || media.media_url || ''),
+        blobUrl: null,
+        sources: variants,
+        streamUrls: playable,
+      };
+    });
+
+  return {
+    images,
+    articleCoverImages: [],
+    hasVideo: videos.length > 0,
+    videos,
+  };
+}
+
+function normalizeSearchExternalCard(tweet, primaryStatusUrl) {
+  const urls = dedupe(
+    (tweet?.legacy?.entities?.urls || [])
+      .map(entity => absoluteUrl(entity?.expanded_url || entity?.expanded_url_https || entity?.url || ''))
+      .filter(Boolean)
+      .filter(url => url !== primaryStatusUrl)
+  );
+
+  const externalUrl = urls.find(isExternalLink) || null;
+  if (!externalUrl) return null;
+
+  return {
+    url: externalUrl,
+    links: urls,
+    text: '',
+    labels: dedupe(
+      (tweet?.legacy?.entities?.urls || [])
+        .flatMap(entity => [entity?.display_url, entity?.expanded_url])
+        .filter(Boolean)
+    ).slice(0, 12),
+  };
+}
+
+function normalizeSearchQuotedTweet(tweet, primaryStatusUrl) {
+  const quoted = unwrapTweetResult(tweet?.quoted_status_result?.result);
+  if (!quoted) return null;
+
+  const author = normalizeSearchAuthor(unwrapUserResult(quoted?.core?.user_results?.result));
+  const text = extractSearchTweetText(quoted);
+  const statusUrl = author.handle && quoted?.rest_id
+    ? cleanUrl(location.origin + '/' + author.handle.replace(/^@/, '') + '/status/' + quoted.rest_id)
+    : null;
+
+  return {
+    authors: (author.name || author.handle) ? [{ name: author.name, handle: author.handle, raw: author.raw }] : [],
+    texts: text ? [text] : [],
+    statusUrls: dedupe(statusUrl && statusUrl !== primaryStatusUrl ? [statusUrl] : []),
+  };
+}
+
+function normalizeSearchTweetItem(tweet) {
+  const normalizedTweet = unwrapTweetResult(tweet);
+  if (!normalizedTweet?.rest_id) return null;
+
+  const legacy = normalizedTweet.legacy || {};
+  const author = normalizeSearchAuthor(unwrapUserResult(normalizedTweet?.core?.user_results?.result));
+  const statusUrl = author.handle
+    ? cleanUrl(location.origin + '/' + author.handle.replace(/^@/, '') + '/status/' + normalizedTweet.rest_id)
+    : null;
+  const text = extractSearchTweetText(normalizedTweet);
+  const media = normalizeSearchMedia(normalizedTweet);
+  const externalCard = normalizeSearchExternalCard(normalizedTweet, statusUrl);
+  const createdAt = legacy.created_at ? new Date(legacy.created_at) : null;
+
+  const item = {
+    statusUrl,
+    statusId: normalizedTweet.rest_id || legacy.id_str || null,
+    author: {
+      name: author.name,
+      handle: author.handle,
+      raw: author.raw,
+    },
+    authoredAt: {
+      text: legacy.created_at || '',
+      dateTime: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt.toISOString() : '',
+    },
+    text,
+    textBlocks: text ? [text] : [],
+    isTruncated: !!normalizedTweet?.note_tweet,
+    metrics: {
+      reply: buildSearchMetric('reply', legacy.reply_count),
+      retweet: buildSearchMetric('retweet', legacy.retweet_count),
+      like: buildSearchMetric('like', legacy.favorite_count),
+      bookmark: buildSearchMetric('bookmark', legacy.bookmark_count),
+      quote: buildSearchMetric('quote', legacy.quote_count),
+    },
+    views: normalizedTweet?.views?.count
+      ? {
+          display: String(Number(normalizedTweet.views.count || 0)),
+          numeric: Number(normalizedTweet.views.count || 0),
+          url: statusUrl ? statusUrl + '/analytics' : null,
+        }
+      : null,
+    media,
+    externalCard,
+    quotedTweet: normalizeSearchQuotedTweet(normalizedTweet, statusUrl),
+    longformPreview: null,
+    entryType: 'tweet',
+  };
+
+  if (item.media.hasVideo) item.entryType = 'video_tweet';
+  else if (item.media.images.length > 0) item.entryType = 'photo_tweet';
+  else if (item.externalCard?.url) item.entryType = 'link_card';
+
+  return item;
+}
+
+function extractBottomCursorFromEntries(entries) {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.content?.cursorType === 'Bottom' && entry.content.value) {
+      return entry.content.value;
+    }
+  }
+  return null;
+}
+
+function parseTimelineInstructions(instructions) {
+  const entries = [];
+  let bottomCursor = null;
+
+  for (const instruction of instructions || []) {
+    if (Array.isArray(instruction?.entries)) {
+      entries.push(...instruction.entries);
+      if (!bottomCursor) bottomCursor = extractBottomCursorFromEntries(instruction.entries);
+    }
+
+    if (instruction?.entry?.content?.cursorType === 'Bottom' && instruction.entry.content.value) {
+      bottomCursor = instruction.entry.content.value;
+    }
+  }
+
+  return { entries, bottomCursor };
+}
+
+function getCurrentSearchTimeline(store) {
+  const state = store?.getState?.();
+  const timelines = Object.entries(state?.urt || {})
+    .filter(([, timeline]) => timeline?.timelineType === 'search' && Array.isArray(timeline?.entries))
+    .sort((left, right) => (right[1]?.lastFetchTimestamp || 0) - (left[1]?.lastFetchTimestamp || 0));
+
+  if (!timelines.length) return null;
+
+  const [timelineId, timeline] = timelines[0];
+  return {
+    timelineId,
+    entries: timeline.entries || [],
+    bottomCursor: extractBottomCursorFromEntries(timeline.entries || []),
+  };
+}
+
+async function fetchSearchTimelineItems(options) {
+  const query = String(options?.query || '').trim();
+  const mode = normalizeSearchMode(options?.mode || 'top');
+  const querySource = normalizeSearchQuerySource(options?.querySource);
+  const limit = Math.max(1, Math.min(Number(options?.limit || 10), 200));
+
+  const context = getRuntimeContext();
+  if (!context?.store) {
+    return { items: [], error: 'search_runtime_unavailable', strategy: 'none', pageCount: 0 };
+  }
+
+  const items = [];
+  const seen = new Set();
+  const pushTweet = (tweet) => {
+    const item = normalizeSearchTweetItem(tweet);
+    const key = item?.statusId || item?.statusUrl || ((item?.author?.handle || '') + ':' + String(item?.text || '').slice(0, 80));
+    if (!item || !key || seen.has(key)) return false;
+    seen.add(key);
+    items.push(item);
+    return true;
+  };
+
+  let pageCount = 0;
+  let cursor = null;
+
+  const initialTimeline = getCurrentSearchTimeline(context.store);
+  if (initialTimeline?.entries?.length) {
+    for (const entry of initialTimeline.entries) {
+      const tweet = unwrapTweetResult(entry?.content?.itemContent?.tweet_results?.result);
+      if (!tweet) continue;
+      pushTweet(tweet);
+      if (items.length >= limit) break;
+    }
+    cursor = initialTimeline.bottomCursor;
+    pageCount += 1;
+  }
+
+  const endpoint = context.endpoint;
+  const maxPages = Math.max(2, Math.ceil(limit / 20) + 2);
+  let apiPages = 0;
+
+  while (items.length < limit && endpoint && apiPages < maxPages) {
+    const response = await endpoint.fetchSearchGraphQL({
+      rawQuery: query,
+      count: 20,
+      product: searchProductFromMode(mode),
+      querySource,
+      cursor: cursor || undefined,
+    });
+
+    apiPages += 1;
+    pageCount += 1;
+
+    const parsed = parseTimelineInstructions(response?.instructions || []);
+    let added = 0;
+
+    for (const entry of parsed.entries) {
+      const tweet = unwrapTweetResult(entry?.content?.itemContent?.tweet_results?.result);
+      if (!tweet) continue;
+      if (pushTweet(tweet)) added += 1;
+      if (items.length >= limit) break;
+    }
+
+    if (!parsed.bottomCursor || parsed.bottomCursor === cursor) break;
+    if (added === 0 && !parsed.bottomCursor) break;
+    cursor = parsed.bottomCursor;
+  }
+
+  return {
+    items: items.slice(0, limit),
+    strategy: endpoint ? 'graphql_internal' : 'store_only',
+    pageCount,
+    bottomCursor: cursor,
+  };
+}
+`;
+
 function buildTimelineExtractJS(limit) {
   return `(() => {
     ${BROWSER_COMMON_JS}
@@ -650,6 +1093,13 @@ function buildHomeMetaJS() {
   return `(() => {
     ${BROWSER_COMMON_JS}
     return JSON.stringify(extractHomeMeta());
+  })()`;
+}
+
+function buildSearchMetaJS() {
+  return `(() => {
+    ${BROWSER_COMMON_JS}
+    return JSON.stringify(extractSearchMeta());
   })()`;
 }
 
@@ -687,6 +1137,22 @@ function buildStatusExtractJS() {
       supporting,
       longform,
     });
+  })()`;
+}
+
+function buildSearchApiExtractJS(query, mode, querySource, limit) {
+  return `(() => {
+    ${BROWSER_COMMON_JS}
+    ${BROWSER_SEARCH_API_JS}
+    return (async () => {
+      const result = await fetchSearchTimelineItems(${JSON.stringify({
+        query,
+        mode,
+        querySource,
+        limit,
+      })});
+      return JSON.stringify(result);
+    })();
   })()`;
 }
 
@@ -859,6 +1325,32 @@ function normalizeProfile(raw, url) {
   };
 }
 
+function normalizeSearch(raw, url) {
+  let currentUrl = raw?.url || url || null;
+  try {
+    currentUrl = new URL(currentUrl).href;
+  } catch {}
+
+  return {
+    query: raw?.query || '',
+    rawQuery: raw?.rawQuery || raw?.query || '',
+    mode: raw?.mode || 'top',
+    rawMode: raw?.rawMode || 'top',
+    url: currentUrl,
+    selectedTab: raw?.selectedTab || null,
+    selectedTabUrl: raw?.selectedTabUrl || null,
+    tabs: raw?.tabs || [],
+  };
+}
+
+function getSearchQuerySource(url) {
+  try {
+    return new URL(url).searchParams.get('src') || 'typed_query';
+  } catch {
+    return 'typed_query';
+  }
+}
+
 function mergeVideoStreams(card, streams) {
   if (!card?.media?.hasVideo || !Array.isArray(card.media.videos)) return card;
 
@@ -990,11 +1482,12 @@ async function ensureLoggedInContent(proxy, targetId, selector, timeout = 20000)
 export default {
   name: 'x',
   domains: ['x.com', 'twitter.com'],
-  description: 'X home/profile/list/status/article extraction with DOM timelines and video stream recovery',
+  description: 'X home/search/profile/list/status/article extraction with DOM timelines, internal search pagination, and video stream recovery',
 
   detect(url) {
     const parsed = new URL(url);
     if (parsed.pathname === '/home') return 'home';
+    if (parsed.pathname === '/search') return 'search';
     if (/^\/i\/lists\/\d+/.test(parsed.pathname)) return 'list';
     if (/\/status\/\d+/.test(parsed.pathname)) return 'status';
     if (detectProfilePath(parsed.pathname)) return 'profile';
@@ -1003,11 +1496,13 @@ export default {
 
   async extract(proxy, targetId, ctx) {
     const { pageType, url } = ctx;
-    const limit = Math.max(1, Math.min(Number(ctx.limit || 10), 50));
+    const limit = Math.max(1, Math.min(Number(ctx.limit || 10), 200));
 
     switch (pageType) {
       case 'home':
         return this._extractHome(proxy, targetId, limit);
+      case 'search':
+        return this._extractSearch(proxy, targetId, limit, url);
       case 'list':
         return this._extractList(proxy, targetId, limit, url);
       case 'profile':
@@ -1017,7 +1512,7 @@ export default {
       default:
         return {
           error: `unsupported page type: ${pageType}`,
-          hint: 'supported URL types: /home, /i/lists/:id, /:user, /:user/(with_replies|articles|media), /:user/status/:id',
+          hint: 'supported URL types: /home, /search?q=...&src=typed_query[&f=live|media|user|list], /i/lists/:id, /:user, /:user/(with_replies|articles|media), /:user/status/:id',
         };
     }
   },
@@ -1042,6 +1537,75 @@ export default {
       tabs: meta?.tabs || [],
       items,
       itemCount: items.length,
+      format: 'json',
+    };
+  },
+
+  async _extractSearch(proxy, targetId, limit, url) {
+    const ready = await ensureLoggedInContent(proxy, targetId, SEARCH_WAIT_SELECTOR);
+    if (ready && ready.error) return ready;
+    await sleep(1800);
+
+    let meta = await evalJson(proxy, targetId, buildSearchMetaJS());
+
+    if (!meta?.query && !meta?.selectedTab) {
+      await proxy.navigate(targetId, url).catch(() => {});
+      await sleep(2500);
+      meta = await evalJson(proxy, targetId, buildSearchMetaJS());
+    }
+
+    let search = normalizeSearch(meta, url);
+    const querySource = getSearchQuerySource(search.url || url);
+    const apiEligible = !!(search.rawQuery || search.query) && !['users', 'lists'].includes(search.mode);
+
+    let items = [];
+    let fetchStrategy = 'dom';
+    let pageCount = null;
+
+    if (apiEligible) {
+      const apiResult = await evalJson(
+        proxy,
+        targetId,
+        buildSearchApiExtractJS(search.rawQuery || search.query, search.mode, querySource, limit)
+      ).catch(() => null);
+
+      if (Array.isArray(apiResult?.items) && apiResult.items.length > 0) {
+        items = apiResult.items;
+        fetchStrategy = apiResult.strategy || 'graphql_internal';
+        pageCount = Number(apiResult.pageCount || 0) || null;
+      }
+    }
+
+    if (!items.length) {
+      let cards = await collectTimelineItems(proxy, targetId, limit, {
+        initialDelay: 1200,
+        maxScrollAttempts: Math.max(12, Math.ceil(limit / 8) + 4),
+        scrollDelay: 1700,
+      });
+
+      if (!cards.length && search.mode !== 'users' && search.mode !== 'lists') {
+        await proxy.navigate(targetId, url).catch(() => {});
+        await sleep(2500);
+        meta = await evalJson(proxy, targetId, buildSearchMetaJS());
+        search = normalizeSearch(meta, url);
+        cards = await collectTimelineItems(proxy, targetId, limit, {
+          initialDelay: 1500,
+          maxScrollAttempts: Math.max(14, Math.ceil(limit / 8) + 5),
+          scrollDelay: 1900,
+        });
+      }
+
+      items = cards.map(normalizeCard);
+    }
+
+    return {
+      contentType: 'timeline',
+      timelineType: 'search',
+      search,
+      items,
+      itemCount: items.length,
+      fetchStrategy,
+      pageCount,
       format: 'json',
     };
   },

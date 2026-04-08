@@ -16,7 +16,7 @@
     },
     "x": {
       "domains": ["x.com", "twitter.com"],
-      "description": "X home/profile/list/status/article extraction with video stream recovery",
+      "description": "X home/search/profile/list/status/article extraction with video stream recovery",
       "files": ["adapters/x.mjs"],
       "updated": "2026-04-08"
     },

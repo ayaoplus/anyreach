@@ -12,6 +12,7 @@ await execFileAsync('node', ['scripts/check-deps.mjs'], {
 });
 
 const HOME_URL = 'https://x.com/home';
+const SEARCH_URL = 'https://x.com/search?q=AI&src=typed_query&f=live';
 const PROFILE_URL = 'https://x.com/AlchainHust';
 const LIST_URL = 'https://x.com/i/lists/2007919886463582333';
 const VIDEO_TWEET_URL = 'https://x.com/wangray/status/2041411785442710008';
@@ -27,6 +28,23 @@ test('x adapter extracts home timeline', { timeout: 180000 }, async () => {
   assert.ok(result.selectedTab);
   assert.ok(Array.isArray(result.items));
   assert.ok(result.items.length >= 1);
+  assert.ok(result.items[0].statusUrl);
+  assert.ok(result.items[0].author.handle.startsWith('@'));
+});
+
+test('x adapter extracts search timeline and metadata', { timeout: 180000 }, async () => {
+  const result = await runAdapter(SEARCH_URL, { limit: 100 });
+
+  assert.equal(result.adapter, 'x');
+  assert.equal(result.pageType, 'search');
+  assert.equal(result.contentType, 'timeline');
+  assert.equal(result.timelineType, 'search');
+  assert.equal(result.search.query, 'AI');
+  assert.equal(result.search.mode, 'latest');
+  assert.equal(result.fetchStrategy, 'graphql_internal');
+  assert.ok(result.pageCount >= 2);
+  assert.ok(result.search.tabs.length >= 4);
+  assert.equal(result.items.length, 100);
   assert.ok(result.items[0].statusUrl);
   assert.ok(result.items[0].author.handle.startsWith('@'));
 });
