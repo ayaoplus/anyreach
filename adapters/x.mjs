@@ -1,6 +1,7 @@
 // AnyReach X adapter
 // Supports:
 //   - home timeline
+//   - profile timeline
 //   - list timeline
 //   - status tweet
 //   - longform article status
@@ -13,7 +14,47 @@
 import { sleep } from './_utils.mjs';
 
 const TIMELINE_WAIT_SELECTOR = 'main [data-testid="primaryColumn"] article[data-testid="tweet"]';
+const PROFILE_WAIT_SELECTOR = 'main [data-testid="primaryColumn"] [data-testid="UserName"], main [data-testid="primaryColumn"] article[data-testid="tweet"]';
 const STATUS_WAIT_SELECTOR = 'main [data-testid="primaryColumn"] article[data-testid="tweet"], [data-testid="twitterArticleReadView"]';
+const PROFILE_TAB_PATHS = new Set(['with_replies', 'articles', 'media']);
+const RESERVED_PROFILE_SEGMENTS = new Set([
+  'home',
+  'explore',
+  'notifications',
+  'messages',
+  'search',
+  'settings',
+  'compose',
+  'login',
+  'signup',
+  'tos',
+  'privacy',
+  'i',
+  'intent',
+  'share',
+  'download',
+  'account',
+  'about',
+  'hashtag',
+  'topics',
+  'communities',
+  'premium',
+  'jobs',
+  'help',
+  'logout',
+]);
+
+function detectProfilePath(pathname) {
+  const match = String(pathname || '').match(/^\/([^/]+)(?:\/([^/]+))?\/?$/);
+  if (!match) return null;
+
+  const handle = match[1];
+  const subpath = match[2] || '';
+  if (!handle || RESERVED_PROFILE_SEGMENTS.has(handle.toLowerCase())) return null;
+  if (!subpath) return { handle, tab: 'posts' };
+  if (PROFILE_TAB_PATHS.has(subpath)) return { handle, tab: subpath };
+  return null;
+}
 
 const BROWSER_COMMON_JS = String.raw`
 const X_HOST_RE = /(^|\.)((x|twitter)\.com)$/i;
@@ -85,6 +126,34 @@ function parseUserBlock(blockText) {
 
 function dedupe(items) {
   return Array.from(new Set(items.filter(Boolean)));
+}
+
+function urlPathname(url) {
+  const full = absoluteUrl(url);
+  if (!full) return '';
+  try {
+    return new URL(full).pathname;
+  } catch {
+    return '';
+  }
+}
+
+function styleUrl(value) {
+  const match = String(value || '').match(/url\\((['"]?)(.*?)\\1\\)/i);
+  return absoluteUrl(match?.[2] || '');
+}
+
+function getTabs(root) {
+  return Array.from(root.querySelectorAll('[role="tab"]'))
+    .map(tab => {
+      const anchor = tab.matches('a[href]') ? tab : tab.querySelector('a[href]');
+      return {
+        label: textOrEmpty(tab),
+        selected: tab.getAttribute('aria-selected') === 'true',
+        url: absoluteUrl(anchor?.href || anchor?.getAttribute('href') || ''),
+      };
+    })
+    .filter(tab => tab.label);
 }
 
 function getStatusLinks(article) {
@@ -285,12 +354,7 @@ function extractTimelineItems(limit) {
 
 function extractHomeMeta() {
   const primary = document.querySelector('main [data-testid="primaryColumn"]') || document.querySelector('main') || document.body;
-  const tabs = Array.from(primary.querySelectorAll('[role="tab"]'))
-    .map(tab => ({
-      label: textOrEmpty(tab),
-      selected: tab.getAttribute('aria-selected') === 'true',
-    }))
-    .filter(tab => tab.label);
+  const tabs = getTabs(primary);
   return {
     tabs,
     selectedTab: tabs.find(tab => tab.selected)?.label || null,
@@ -338,6 +402,73 @@ function extractListMeta() {
       text: textOrEmpty(followersLink),
       url: absoluteUrl(followersLink?.href || ''),
     },
+  };
+}
+
+function extractProfileMeta() {
+  const primary = document.querySelector('main [data-testid="primaryColumn"]') || document.querySelector('main') || document.body;
+  const anchors = Array.from(primary.querySelectorAll('a[href]'));
+  const nameBlock = primary.querySelector('[data-testid="UserName"]');
+  const owner = parseUserBlock(textOrEmpty(nameBlock));
+  const tabs = getTabs(primary);
+  const findAnchor = (pattern) => anchors.find(anchor => pattern.test(urlPathname(anchor.href || anchor.getAttribute('href') || '')));
+  const followAction = primary.querySelector('[data-testid="placementTracking"] button')
+    || primary.querySelector('[data-testid$="-unfollow"], [data-testid$="-follow"]');
+  const avatarImage = primary.querySelector('a[href$="/photo"] img')
+    || primary.querySelector('[data-testid^="UserAvatar-Container-"] img');
+  const headerPhotoLink = findAnchor(/\/[^/]+\/header_photo$/i);
+  const headerMediaNode = headerPhotoLink
+    ? Array.from(headerPhotoLink.querySelectorAll('[style]')).find(node => /background-image/i.test(node.getAttribute('style') || ''))
+    : null;
+  const websiteNode = primary.querySelector('[data-testid="UserUrl"]');
+  const joinedNode = primary.querySelector('[data-testid="UserJoinDate"]');
+  const primaryText = textOrEmpty(primary);
+  const postCountMatch = primaryText.match(/([\d,.]+(?:\.\d+)?\s*[kKmMbB万亿]?)\s*(帖子|Posts)/i);
+  const actionTestId = followAction?.getAttribute('data-testid') || '';
+  const followingLink = findAnchor(/\/[^/]+\/following$/i);
+  const followersLink = findAnchor(/\/[^/]+\/(?:followers|verified_followers)$/i);
+  const followersYouKnowLink = findAnchor(/\/[^/]+\/followers_you_follow$/i);
+
+  return {
+    name: owner.name,
+    handle: owner.handle,
+    url: location.origin + location.pathname,
+    bio: textOrEmpty(primary.querySelector('[data-testid="UserDescription"]')),
+    professionalCategory: textOrEmpty(primary.querySelector('[data-testid="UserProfessionalCategory"]')),
+    location: textOrEmpty(primary.querySelector('[data-testid="UserLocation"]')),
+    website: {
+      text: textOrEmpty(websiteNode),
+      url: absoluteUrl(websiteNode?.href || websiteNode?.getAttribute('href') || ''),
+    },
+    joined: {
+      text: textOrEmpty(joinedNode),
+      url: absoluteUrl(joinedNode?.href || joinedNode?.getAttribute('href') || ''),
+    },
+    avatarUrl: absoluteUrl(avatarImage?.currentSrc || avatarImage?.src || avatarImage?.getAttribute('src') || ''),
+    headerImageUrl: styleUrl(headerMediaNode?.style?.backgroundImage || headerMediaNode?.getAttribute('style') || ''),
+    postCountText: postCountMatch ? postCountMatch[0] : '',
+    following: {
+      text: textOrEmpty(followingLink),
+      url: absoluteUrl(followingLink?.href || ''),
+    },
+    followers: {
+      text: textOrEmpty(followersLink),
+      url: absoluteUrl(followersLink?.href || ''),
+    },
+    followersYouKnow: {
+      text: textOrEmpty(followersYouKnowLink),
+      url: absoluteUrl(followersYouKnowLink?.href || ''),
+    },
+    isVerified: !!nameBlock?.querySelector('[data-testid="icon-verified"]'),
+    isProtected: !!nameBlock?.querySelector('[data-testid="icon-lock"]'),
+    relationship: {
+      following: actionTestId
+        ? /-unfollow$/i.test(actionTestId)
+        : (textOrEmpty(followAction) ? /正在关注|Following/i.test(textOrEmpty(followAction)) : null),
+      actionLabel: textOrEmpty(followAction),
+    },
+    tabs,
+    selectedTab: tabs.find(tab => tab.selected)?.label || null,
   };
 }
 
@@ -529,6 +660,13 @@ function buildListMetaJS() {
   })()`;
 }
 
+function buildProfileMetaJS() {
+  return `(() => {
+    ${BROWSER_COMMON_JS}
+    return JSON.stringify(extractProfileMeta());
+  })()`;
+}
+
 function buildStatusExtractJS() {
   return `(() => {
     ${BROWSER_COMMON_JS}
@@ -643,6 +781,81 @@ function normalizeLongformArticle(raw) {
     links: raw.links || [],
     codeBlockCount: raw.codeBlockCount || 0,
     textLength: raw.textLength || 0,
+  };
+}
+
+function inferHandleFromUrl(url) {
+  try {
+    const profile = detectProfilePath(new URL(url).pathname);
+    return profile ? '@' + profile.handle : '';
+  } catch {
+    return '';
+  }
+}
+
+function normalizeProfile(raw, url) {
+  const handle = raw?.handle || inferHandleFromUrl(url);
+  const currentUrl = (() => {
+    try {
+      const parsed = new URL(raw?.url || url);
+      return parsed.origin + parsed.pathname;
+    } catch {
+      return raw?.url || url || null;
+    }
+  })();
+  const baseUrl = handle
+    ? (() => {
+        try {
+          const parsed = new URL(url || raw?.url || 'https://x.com');
+          return `${parsed.origin}/${handle.replace(/^@/, '')}`;
+        } catch {
+          return `https://x.com/${handle.replace(/^@/, '')}`;
+        }
+      })()
+    : currentUrl;
+
+  return {
+    name: raw?.name || '',
+    handle,
+    url: currentUrl,
+    baseUrl,
+    bio: raw?.bio || '',
+    professionalCategory: raw?.professionalCategory || '',
+    location: raw?.location || '',
+    website: {
+      text: raw?.website?.text || '',
+      url: raw?.website?.url || null,
+    },
+    joined: {
+      text: raw?.joined?.text || '',
+      url: raw?.joined?.url || null,
+    },
+    avatarUrl: raw?.avatarUrl || null,
+    headerImageUrl: raw?.headerImageUrl || null,
+    postCount: parseCountText(raw?.postCountText || ''),
+    postCountText: raw?.postCountText || '',
+    following: {
+      text: raw?.following?.text || '',
+      count: parseCountText(raw?.following?.text || ''),
+      url: raw?.following?.url || null,
+    },
+    followers: {
+      text: raw?.followers?.text || '',
+      count: parseCountText(raw?.followers?.text || ''),
+      url: raw?.followers?.url || null,
+    },
+    followersYouKnow: {
+      text: raw?.followersYouKnow?.text || '',
+      url: raw?.followersYouKnow?.url || null,
+    },
+    isVerified: !!raw?.isVerified,
+    isProtected: !!raw?.isProtected,
+    relationship: {
+      following: raw?.relationship?.following ?? null,
+      actionLabel: raw?.relationship?.actionLabel || '',
+    },
+    selectedTab: raw?.selectedTab || null,
+    tabs: raw?.tabs || [],
   };
 }
 
@@ -777,13 +990,14 @@ async function ensureLoggedInContent(proxy, targetId, selector, timeout = 20000)
 export default {
   name: 'x',
   domains: ['x.com', 'twitter.com'],
-  description: 'X home/list/status/article extraction with DOM timelines and video stream recovery',
+  description: 'X home/profile/list/status/article extraction with DOM timelines and video stream recovery',
 
   detect(url) {
     const parsed = new URL(url);
     if (parsed.pathname === '/home') return 'home';
     if (/^\/i\/lists\/\d+/.test(parsed.pathname)) return 'list';
     if (/\/status\/\d+/.test(parsed.pathname)) return 'status';
+    if (detectProfilePath(parsed.pathname)) return 'profile';
     return 'unknown';
   },
 
@@ -796,12 +1010,14 @@ export default {
         return this._extractHome(proxy, targetId, limit);
       case 'list':
         return this._extractList(proxy, targetId, limit, url);
+      case 'profile':
+        return this._extractProfile(proxy, targetId, limit, url);
       case 'status':
         return this._extractStatus(proxy, targetId, url);
       default:
         return {
           error: `unsupported page type: ${pageType}`,
-          hint: 'supported URL types: /home, /i/lists/:id, /:user/status/:id',
+          hint: 'supported URL types: /home, /i/lists/:id, /:user, /:user/(with_replies|articles|media), /:user/status/:id',
         };
     }
   },
@@ -863,6 +1079,42 @@ export default {
         memberCount: parseCountText(meta?.members?.text),
         followerCount: parseCountText(meta?.followers?.text),
       },
+      items,
+      itemCount: items.length,
+      format: 'json',
+    };
+  },
+
+  async _extractProfile(proxy, targetId, limit, url) {
+    const ready = await ensureLoggedInContent(proxy, targetId, PROFILE_WAIT_SELECTOR);
+    if (ready && ready.error) return ready;
+    await sleep(1800);
+
+    let meta = await evalJson(proxy, targetId, buildProfileMetaJS());
+    let cards = await collectTimelineItems(proxy, targetId, limit, {
+      initialDelay: 1200,
+      maxScrollAttempts: 10,
+      scrollDelay: 1800,
+    });
+
+    if ((!meta?.handle && !meta?.name) || (!cards.length && !meta?.selectedTab)) {
+      await proxy.navigate(targetId, url).catch(() => {});
+      await sleep(2500);
+      meta = await evalJson(proxy, targetId, buildProfileMetaJS());
+      cards = await collectTimelineItems(proxy, targetId, limit, {
+        initialDelay: 1500,
+        maxScrollAttempts: 12,
+        scrollDelay: 2000,
+      });
+    }
+
+    const items = cards.map(normalizeCard);
+    const profile = normalizeProfile(meta, url);
+
+    return {
+      contentType: 'timeline',
+      timelineType: 'profile',
+      profile,
       items,
       itemCount: items.length,
       format: 'json',

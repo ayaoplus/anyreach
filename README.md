@@ -233,7 +233,7 @@ export default {
 |--------|------|------|
 | [**feishu**](docs/adapter-feishu.md) | feishu.cn, larksuite.com | 知识库/云文档提取。通过 `window.DATA` block 数据 + Worker 拦截实现长文档完整提取。支持所有 block 类型（标题、列表、图片、表格、高亮块、引用等）输出 Markdown。 |
 | **xiaohongshu** | xiaohongshu.com, xhslink.com | 笔记（图文/视频）、用户主页、信息流。滚动加载、批量提取。 |
-| [**x**](docs/adapter-x.md) | x.com, twitter.com | 首页 timeline、列表 timeline、普通推文、长文章。支持推文图片/视频，视频通过 CDP 网络事件恢复 `video.twimg.com` HLS 地址，文章输出 Markdown。 |
+| [**x**](docs/adapter-x.md) | x.com, twitter.com | 首页 timeline、用户主页 timeline、列表 timeline、普通推文、长文章。支持推文图片/视频，视频通过 CDP 网络事件恢复 `video.twimg.com` HLS 地址，文章输出 Markdown。 |
 | [**scys**](docs/adapter-scys.md) | scys.com | 帖子详情、风向标列表（预览/归档两种模式）、航海项目、航海手册（逐章提取，输出 Markdown）。 |
 
 

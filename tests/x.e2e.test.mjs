@@ -12,6 +12,7 @@ await execFileAsync('node', ['scripts/check-deps.mjs'], {
 });
 
 const HOME_URL = 'https://x.com/home';
+const PROFILE_URL = 'https://x.com/AlchainHust';
 const LIST_URL = 'https://x.com/i/lists/2007919886463582333';
 const VIDEO_TWEET_URL = 'https://x.com/wangray/status/2041411785442710008';
 const ARTICLE_URL = 'https://x.com/MinLiBuilds/status/2041178722230030384';
@@ -28,6 +29,22 @@ test('x adapter extracts home timeline', { timeout: 180000 }, async () => {
   assert.ok(result.items.length >= 1);
   assert.ok(result.items[0].statusUrl);
   assert.ok(result.items[0].author.handle.startsWith('@'));
+});
+
+test('x adapter extracts profile timeline and metadata', { timeout: 180000 }, async () => {
+  const result = await runAdapter(PROFILE_URL, { limit: 3 });
+
+  assert.equal(result.adapter, 'x');
+  assert.equal(result.pageType, 'profile');
+  assert.equal(result.contentType, 'timeline');
+  assert.equal(result.timelineType, 'profile');
+  assert.equal(result.profile.handle, '@AlchainHust');
+  assert.ok(result.profile.name.length > 0);
+  assert.ok(result.profile.bio.length > 0);
+  assert.ok(result.profile.followers.count > 0);
+  assert.ok(result.profile.tabs.length >= 3);
+  assert.ok(result.items.length >= 1);
+  assert.ok(result.items[0].statusUrl);
 });
 
 test('x adapter extracts list timeline and metadata', { timeout: 180000 }, async () => {
