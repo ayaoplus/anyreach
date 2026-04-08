@@ -253,7 +253,7 @@ When `adapter-runner` finds no local match, it fetches the registry from GitHub,
 |---------|---------|-------------|
 | **feishu** | feishu.cn, larksuite.com | Wiki/docx full extraction via `window.DATA` block data + Worker CDP interception for long docs. Markdown output with all block types (headings, lists, images, native tables, callouts, quotes, code). See [adapter-feishu.md](adapter-feishu.md) |
 | **xiaohongshu** | xiaohongshu.com, xhslink.com | Notes (image+text, video+text), profiles, feeds. Scroll-to-load, batch extraction |
-| **x** | x.com, twitter.com | Home timeline, search timeline, profile timeline, list timeline, tweet detail, and longform article detail. Video tweets recover `video.twimg.com` HLS URLs from CDP network events; longform articles are rendered to Markdown from Draft.js rich text. See [adapter-x.md](adapter-x.md) |
+| **x** | x.com, twitter.com | Home timeline, search timeline, profile timeline, list timeline, tweet detail, and longform article detail. Search timelines can page through larger result sets via X's internal GraphQL client; video tweets recover `video.twimg.com` HLS URLs from CDP network events; longform articles are rendered to Markdown from Draft.js rich text. See [adapter-x.md](adapter-x.md) |
 | **scys** | scys.com | Articles, opportunities (list/archive modes with pagination + bid filter), activity projects, course manuals (chapter-by-chapter Markdown via Feishu SDK DOM). See [adapter-scys.md](adapter-scys.md) |
 
 ## SKILL.md Design

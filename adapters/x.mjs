@@ -9,6 +9,7 @@
 //
 // Extraction strategy:
 //   - Timeline/status content comes from the live DOM inside the logged-in browser.
+//   - Search pagination reuses X's in-page runtime and internal GraphQL client when available.
 //   - Video stream URLs are recovered from CDP Network events because the DOM only exposes blob: URLs.
 //   - Longform articles are converted to Markdown from the rendered Draft.js rich text tree.
 

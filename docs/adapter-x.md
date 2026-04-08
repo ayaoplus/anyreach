@@ -18,9 +18,19 @@
 - Deduplicate entries by normalized status URL / status ID
 - Extract author, time, text, metrics, views, media, quoted tweet preview, and external cards
 - Home timeline also returns the current selected tab
-- Search timelines return search metadata (query, mode, selected tab, tabs) and use X's internal `fetchSearchGraphQL` pagination for larger limits like `limit: 100`
+- Search timelines return search metadata (`query`, `rawQuery`, `mode`, `selectedTab`, `tabs`)
+- Tweet-centric search modes (`top`, `live`, `media`) use X's internal `fetchSearchGraphQL` pagination, so larger limits like `limit: 100` are reliable
+- Search results also expose `fetchStrategy` and `pageCount` so callers can tell whether internal pagination or DOM fallback was used
 - Profile timelines also return profile header metadata (name, handle, bio, website, join date, follower stats, relationship state, tabs)
 - List timeline also returns list metadata (name, owner, members, followers)
+
+### Search pagination details
+
+- `limit` is capped at `200`
+- The adapter first reads the current search page state from the live React/Redux runtime
+- It then reuses the page's internal API client and `fetchSearchGraphQL` endpoint to fetch more pages with the bottom cursor
+- If that runtime path is unavailable, it falls back to DOM timeline extraction
+- The current large-limit guarantee is primarily for tweet timelines, especially `f=live`
 
 ### Video tweets
 
@@ -61,7 +71,7 @@ The result includes article title, Markdown, headings, links, and code block cou
 ```bash
 node -e "import { runAdapter } from './scripts/adapter-runner.mjs'; \
   const r = await runAdapter('https://x.com/search?q=AI&src=typed_query&f=live', { limit: 100 }); \
-  console.log(JSON.stringify({ mode: r.search.mode, itemCount: r.itemCount }, null, 2));"
+  console.log(JSON.stringify({ mode: r.search.mode, itemCount: r.itemCount, fetchStrategy: r.fetchStrategy, pageCount: r.pageCount }, null, 2));"
 ```
 
 ## E2E test

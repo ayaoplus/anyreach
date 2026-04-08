@@ -227,7 +227,7 @@ export default {
 |---------|---------|-------------|
 | **feishu** | feishu.cn, larksuite.com | Wiki/docx extraction. Full document via `window.DATA` block data + Worker interception for long docs. Supports all block types (headings, lists, images, tables, callouts, quotes) with Markdown output. [Technical docs](docs/adapter-feishu.md) |
 | **xiaohongshu** | xiaohongshu.com, xhslink.com | Notes (image+text, video+text), profiles, feeds. Scroll-to-load, batch extraction |
-| **x** | x.com, twitter.com | Home timeline, search timeline, profile timeline, list timeline, tweet detail, and longform article detail. Supports tweet images/videos, recovers `video.twimg.com` HLS URLs via CDP network events, and converts longform articles to Markdown. [Technical docs](docs/adapter-x.md) |
+| **x** | x.com, twitter.com | Home timeline, search timeline, profile timeline, list timeline, tweet detail, and longform article detail. Search uses internal pagination for larger tweet batches such as `limit: 100`; tweet videos recover `video.twimg.com` HLS URLs via CDP network events, and longform articles are converted to Markdown. [Technical docs](docs/adapter-x.md) |
 | **scys** | scys.com | Articles, opportunities (list/archive modes with pagination + bid filter), activity projects, course manuals (chapter-by-chapter Markdown extraction). [Technical docs](docs/adapter-scys.md) |
 
 
