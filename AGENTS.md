@@ -8,7 +8,7 @@ When updating development philosophy, commit convention, coding rules, or archit
 
 ## Project Overview
 
-AnyReach is an intelligent web access skill for AI agents. It provides CDP browser automation with a site adapter system, forked from web-access's design philosophy but with a fundamentally different architecture.
+AnyReach is an intelligent web access skill for AI agents. It connects to the user's daily Chrome via CDP, provides site-specific adapters for deterministic content extraction, and exposes a generic HTTP API for browser automation.
 
 ## Development Philosophy
 
@@ -97,7 +97,7 @@ SKILL.md          → Agent-facing strategy prompt
 
 ### Multi-Agent Session Management
 
-When multiple agent frameworks (Claude Code, Codex, OpenClaw) share one CDP Proxy
+When multiple agent frameworks share one CDP Proxy
 concurrently, orphan tabs and cross-agent interference become real risks. Current
 design relies on callers managing their own targetIds — no agent ownership tracking.
 

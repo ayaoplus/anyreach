@@ -4,9 +4,9 @@
 
 ## Design Philosophy
 
-web-access proved that **the best browser tool for AI agents is the user's own browser**. But it left too much to the LLM — every site visit requires writing custom JS, exploring DOM, handling virtualized rendering from scratch.
+Most AI agent browser tools treat every site visit as a blank slate — the LLM writes custom JS, explores DOM structures, and handles virtualized rendering from scratch. Tokens burn, results vary.
 
-AnyReach keeps the core insight (CDP connection to user's daily Chrome, shared login state, background tabs) and adds: **site adapters** (executable extraction code), **prompt hints** (site-specific LLM knowledge), a **remote registry** (on-demand download), and a **batch crawler** (concurrent multi-URL extraction).
+AnyReach takes a different approach: connect to the user's daily Chrome via CDP (shared login state, background tabs), and layer **site adapters** (executable extraction code), **prompt hints** (site-specific LLM knowledge), a **remote registry** (on-demand download), and a **batch crawler** (concurrent multi-URL extraction) on top.
 
 ## System Overview
 

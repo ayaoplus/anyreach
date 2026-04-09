@@ -6,7 +6,7 @@
 - 启动：`node scripts/check-deps.mjs`（自动检测环境并启动 Proxy）
 - 强制停止：`pkill -f cdp-proxy.mjs`
 
-## 基础端点（继承 web-access）
+## 基础端点
 
 | 端点 | 方法 | 说明 |
 |------|------|------|

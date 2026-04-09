@@ -21,7 +21,7 @@
 
 ## 它做什么
 
-AnyReach 将你的 AI Agent（Claude Code、Codex、OpenClaw）连接到你日常使用的 Chrome 浏览器。Agent 在后台标签页中操作——共享你的登录状态，对反爬检测不可见，不会抢占你的浏览器焦点。
+AnyReach 将你的 AI Agent 连接到你日常使用的 Chrome 浏览器。Agent 在后台标签页中操作——共享你的登录状态，对反爬检测不可见，不会抢占你的浏览器焦点。
 
 <img src="docs/images/architecture-overview-zh.png" alt="架构总览" width="80%" />
 
@@ -52,7 +52,7 @@ node ~/anyreach/scripts/install.mjs
 
 安装会创建符号链接：
 - `~/.claude/skills/anyreach` → Claude Code
-- `~/.agents/skills/anyreach` → Codex + OpenClaw
+- `~/.agents/skills/anyreach` → 其他 Agent 框架
 
 一份代码，共享 `SKILL.md`，所有 Agent 都能加载。
 
@@ -208,7 +208,7 @@ export default {
 
 ## 致谢
 
-架构灵感来自 [web-access](https://github.com/eze-is/web-access)（作者：一泽 Eze）。AnyReach 在 web-access 的基础上增加了适配器系统、增强的 CDP 端点和 Worker 级别的数据拦截能力。
+感谢 [一泽 Eze](https://github.com/eze-is) 在 AI Agent 浏览器工具方向的早期探索。
 
 ---
 

@@ -21,7 +21,7 @@
 
 ## What it does
 
-AnyReach connects your AI agent (Claude Code, Codex, OpenClaw) to your daily Chrome browser. The agent operates in background tabs — sharing your login state, invisible to anti-bot detection, and never stealing your browser focus.
+AnyReach connects your AI agent to your daily Chrome browser. The agent operates in background tabs — sharing your login state, invisible to anti-bot detection, and never stealing your browser focus.
 
 <img src="docs/images/architecture-overview.png" alt="Architecture Overview" width="80%" />
 
@@ -52,7 +52,7 @@ node ~/anyreach/scripts/install.mjs
 
 This creates symlinks for all supported agents:
 - `~/.claude/skills/anyreach` → Claude Code
-- `~/.agents/skills/anyreach` → Codex + OpenClaw
+- `~/.agents/skills/anyreach` → Other agent frameworks
 
 One copy, shared `SKILL.md`, all three agents can load it.
 
@@ -208,7 +208,7 @@ export default {
 
 ## Credits
 
-Architecture inspired by [web-access](https://github.com/eze-is/web-access) by 一泽 Eze. AnyReach diverges from web-access by adding the adapter system, enhanced CDP endpoints, and Worker-level data interception.
+Thanks to [一泽 Eze](https://github.com/eze-is) for early exploration in AI agent browser tooling.
 
 ---
 
