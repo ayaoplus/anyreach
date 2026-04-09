@@ -314,9 +314,28 @@ export default {
     return 'unknown';
   },
 
+  // 检测是否被登录墙拦截（微信快捷登录弹窗 / 空 body）
+  async _checkLoginWall(proxy, targetId) {
+    return proxy.eval(targetId,
+      `!!(document.querySelector('.wechat-login, .login-page, [class*=login-wrap]') ||
+         document.body?.innerText?.includes('微信快捷登录') ||
+         document.body?.innerText?.includes('使用微信'))`
+    ).catch(() => false);
+  },
+
   async extract(proxy, targetId, ctx) {
     const { pageType } = ctx;
     const limit = ctx.limit || 20;
+
+    // 等页面基本就绪后检查登录墙
+    await sleep(1500);
+    if (await this._checkLoginWall(proxy, targetId)) {
+      return {
+        error: 'login_required',
+        hint: '请在 Chrome 中登录 scys.com（微信扫码），然后重试',
+        pageType,
+      };
+    }
 
     switch (pageType) {
       case 'article':
