@@ -123,6 +123,23 @@ node "<anyreach_dir>/scripts/adapter-runner.mjs" hint "URL"         # 获取 .md
 node "<anyreach_dir>/scripts/adapter-runner.mjs" download "URL"     # 手动下载远程适配器
 ```
 
+`run` 支持 `--ctx <json>` 传递适配器参数：
+
+```bash
+node "<anyreach_dir>/scripts/adapter-runner.mjs" run "URL" --ctx '{"maxPages":10,"limit":200}'
+```
+
+常用 ctx 参数：
+
+| 参数 | 说明 | 默认 |
+|------|------|------|
+| `limit` | 最大条目数 | 20 |
+| `maxPages` | 最多翻页数 | 5 |
+| `mode` | 列表模式（`list` / `archive`） | `list` |
+| `bidOnly` | 仅中标（opportunity 用） | `false` |
+| `checkpointFile` | 每页写断点文件路径 | — |
+| `resumePage` | 从断点文件继续 | `false` |
+
 适配器失败时直接降级到 hint 或通用模式，不反复重试。
 
 ## 并行分治
@@ -155,6 +172,52 @@ node "<anyreach_dir>/scripts/crawler.mjs" --urls urls.txt
 - managed mode 默认启动独立 headless Chrome，通过 cookie 移植获取登录态
 - 输出 NDJSON 格式，每行一个 `{ url, status, adapter, data, error }`
 - 进度和日志输出到 stderr，不干扰 NDJSON 数据流
+
+## 站点专项：生财有术 (scys.com)
+
+**登录要求**：精华帖、风向标等内容需要登录态。必须使用 user mode（直连用户 Chrome），不能用 managed mode。
+
+### 页面类型
+
+| URL 模式 | pageType | 说明 |
+|----------|----------|------|
+| `/?filter=essence` 或首页 | `essence` | 精华帖列表，`.compact-card`，分页 |
+| `/opportunity` | `opportunity` | 风向标列表，`.post-item`，滚动加载 |
+| `/activity` | `activity` | 航海项目列表 |
+| `/course/detail/` | `course` | 航海手册，多章节逐章提取 |
+| `/articleDetail/` | `article` | 帖子详情 |
+
+### 精华帖内容类型
+
+精华帖有两种形态，同一篇帖子也可能两者兼有：
+
+- **站内内容**：正文直接在 `scys.com/articleDetail/` 页，`_extractArticle` 提取完整文本
+- **飞书内容**：正文在飞书 wiki/docx，卡片 `externalLinks` 包含飞书 URL，需 feishu adapter 提取
+
+`collect-urls.mjs` 默认同时输出两类 URL，crawler 自动走对应 adapter。
+
+### 全量精华帖爬取流程
+
+```bash
+# 第一步：列表抓取（全量约 222 页，每页写 checkpoint）
+node "<anyreach_dir>/scripts/adapter-runner.mjs" run "https://scys.com/?filter=essence" \
+  --ctx '{"maxPages":999,"limit":9999,"checkpointFile":"/tmp/essence-cp.json"}' \
+  > /tmp/essence-list.json
+
+# 中断后续传（从 checkpoint 跳页继续）：
+node "<anyreach_dir>/scripts/adapter-runner.mjs" run "https://scys.com/?filter=essence" \
+  --ctx '{"maxPages":999,"limit":9999,"checkpointFile":"/tmp/essence-cp.json","resumePage":true}' \
+  > /tmp/essence-list.json
+
+# 第二步：从列表结果提取内容 URL（含飞书链接）
+node "<anyreach_dir>/scripts/collect-urls.mjs" --input /tmp/essence-list.json --output /tmp/essence-urls.txt
+# 仅飞书内容：追加 --filter feishu.cn
+# 仅站内文章：追加 --only-internal
+
+# 第三步：并发爬全文（user mode 保持登录态）
+node "<anyreach_dir>/scripts/crawler.mjs" \
+  --urls /tmp/essence-urls.txt --mode user --output /tmp/essence-full.ndjson
+```
 
 ## 技术事实
 
