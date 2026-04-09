@@ -13,7 +13,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/ayaoplus/anyreach?style=social)](https://github.com/ayaoplus/anyreach)
 
-*CDP browser automation with a site adapter system for deterministic content extraction.*
+*Bring agents anywhere.*
 
 [Quick Start](#install) · [CDP API](#cdp-proxy-api) · [Adapter System](#adapter-system) · [Installed Adapters](#installed-adapters)
 

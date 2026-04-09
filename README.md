@@ -13,7 +13,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/ayaoplus/anyreach?style=social)](https://github.com/ayaoplus/anyreach)
 
-*基于 CDP 浏览器自动化，配合站点适配器系统，实现确定性内容提取。*
+*Bring agents anywhere.*
 
 [快速开始](#安装) · [CDP API](#cdp-proxy-api) · [适配器系统](#适配器系统) · [已有适配器](#已有适配器)
 
