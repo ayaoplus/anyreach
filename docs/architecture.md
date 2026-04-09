@@ -1,39 +1,14 @@
 # AnyReach Architecture
 
+> Chinese version: [architecture-zh.md](architecture-zh.md)
+
 ## Design Philosophy
 
 AnyReach is born from a simple observation: web-access proved that **the best browser tool for AI agents is the user's own browser**. But it left too much work to the LLM — every site visit requires the agent to write custom JS, explore DOM structures, and handle virtualized rendering from scratch. Tokens burn, results vary.
 
 AnyReach keeps the core insight (connect to the user's daily Chrome via CDP, share login state, operate in background tabs) and adds two layers: **site adapters** (executable extraction code) and **prompt hints** (site-specific knowledge for the LLM), backed by a **remote registry** for on-demand download.
 
-```
-┌──────────────────────────────────────────────────────┐
-│                     AI Agent                          │
-│           (Claude Code / Codex / OpenClaw)            │
-├──────────────────────────────────────────────────────┤
-│                    SKILL.md                           │
-│        Browsing philosophy + tool selection           │
-├───────────────┬──────────────────────────────────────┤
-│ Adapter       │          CDP Proxy                    │
-│ Runner        │       (HTTP API server)               │
-│               │                                      │
-│ ┌──────────┐  │  /new /eval /click /scroll ...       │
-│ │feishu.mjs│  │  /extractText /fill /waitFor         │
-│ └──────────┘  │  /setCookie /getCookies /preScript   │
-│ ┌──────────┐  │                                      │
-│ │ scys.mjs │  │          WebSocket                   │
-│ └──────────┘  │             │                        │
-│ ┌──────────┐  │             ▼                        │
-│ │  xhs.mjs │  │       User's Chrome                  │
-│ └──────────┘  │     (background tabs)                │
-│ ┌──────────┐  │                                      │
-│ │  xhs.md  │  │  registry.json (remote index)        │
-│ └──────────┘  │                                      │
-│ ┌──────────┐  │                                      │
-│ │_utils.mjs│  │                                      │
-│ └──────────┘  │                                      │
-└───────────────┴──────────────────────────────────────┘
-```
+![Architecture Overview](images/architecture-overview.png)
 
 ### Four-layer design
 
@@ -47,13 +22,7 @@ AnyReach keeps the core insight (connect to the user's daily Chrome via CDP, sha
 
 ### Resolution order
 
-```
-Agent receives URL
-  ├─ 1. Local .mjs adapter?  →  run adapter  →  structured content
-  ├─ 2. Local .md hint?      →  return hint  →  LLM uses CDP with guidance
-  ├─ 3. Remote registry?     →  download + run adapter
-  └─ 4. None                 →  generic CDP mode (eval/click/scroll)
-```
+![Request Flow](images/request-flow.png)
 
 ## CDP Proxy
 
