@@ -22,41 +22,53 @@ import { sleep, downloadMedia, scrollToLoad } from './_utils.mjs';
 // =========================================================
 
 // --- 帖子详情 ---
+// DOM 路径（2025 版）：
+//   .content-mt > .container > main
+//     header                → 作者、身份、日期
+//     .title-line           → 精华标签 + 标题
+//     .content-container    → ★ 正文（仅此为内容，不含评论）
+//     .label-box            → 标签
+//     .interactions         → 互动数据
+//     .comment-container    → 评论区（排除）
 const EXTRACT_ARTICLE_JS = `(() => {
-  const content = document.querySelector('.content-mt');
-  if (!content) return null;
+  const main = document.querySelector('.content-mt .container main') || document.querySelector('.content-mt');
+  if (!main) return null;
 
-  // author + date in the top area
-  const topInfo = content.querySelector('.post-item-top, [class*=author]');
-  const author = topInfo?.querySelector('.name-identity, .nickname, [class*=name]')?.innerText?.trim() || '';
-  const date = topInfo?.querySelector('[class*=time], [class*=date]')?.innerText?.trim() || '';
+  // 作者 + 身份 + 日期
+  const header = main.querySelector('header');
+  const author = header?.querySelector('.nickname, [class*=name]')?.innerText?.trim() || '';
+  const identity = header?.querySelector('.vc-identity-badge, [class*=identity]')?.innerText?.trim() || '';
+  const date = header?.querySelector('[class*=time], [class*=date]')?.innerText?.trim() || '';
 
-  // title: first major heading or bold text
-  const titleEl = content.querySelector('h1, h2, .title, [class*=title]');
-  const title = titleEl?.innerText?.trim() || '';
+  // 标题
+  const titleLine = main.querySelector('.title-line');
+  const title = titleLine?.querySelector('.title-text, [class*=title]')?.innerText?.trim()
+    || titleLine?.innerText?.replace('精华', '')?.trim() || '';
 
-  // full text
-  const text = content.innerText?.trim() || '';
+  // ★ 正文（只取 .content-container，排除评论区）
+  const contentEl = main.querySelector('.content-container');
+  const text = contentEl?.innerText?.trim() || '';
 
-  // images
-  const imgs = Array.from(content.querySelectorAll('img'))
+  // 正文中的图片
+  const imgs = Array.from((contentEl || main).querySelectorAll('img'))
     .map(i => i.src)
     .filter(s => s && !s.includes('avatar') && !s.includes('emoji'));
 
-  // external links (feishu etc)
-  const links = Array.from(content.querySelectorAll('a'))
+  // 外部链接（飞书等，仅从正文区提取）
+  const externalLinks = Array.from((contentEl || main).querySelectorAll('a'))
     .map(a => ({ text: a.innerText?.trim()?.slice(0,60), href: a.href }))
     .filter(l => l.href && !l.href.includes('scys.com'));
 
-  // tags
-  const tags = Array.from(content.querySelectorAll('[class*=tag], .tag'))
+  // 标签
+  const tags = Array.from(main.querySelectorAll('.label-box [class*=tag], .label-box span'))
     .map(t => t.innerText?.trim()).filter(Boolean);
 
-  // interaction (likes, collects, comments)
-  const counts = Array.from(content.querySelectorAll('[class*=action] [class*=count], .vc-post-action-bar span'))
+  // 互动数据（按顺序：锚点、点赞、评论、收藏）
+  const interactions = main.querySelector('.interactions');
+  const counts = Array.from(interactions?.querySelectorAll('.item, .favorite-wrapper') || [])
     .map(el => el.innerText?.trim()).filter(Boolean);
 
-  return { title, author, date, text, imgs, externalLinks: links, tags, interactionCounts: counts };
+  return { title, author, identity, date, text, imgs, externalLinks, tags, interactionCounts: counts };
 })()`;
 
 // --- 风向标列表卡片（预览模式） ---
@@ -336,11 +348,34 @@ export default {
   },
 
   // --- 帖子详情 ---
+  // 如果正文含飞书链接，自动跟进提取飞书内容，合并到结果中
   async _extractArticle(proxy, targetId) {
-    await proxy.waitFor(targetId, '.content-mt', 10000).catch(() => {});
+    await proxy.waitFor(targetId, '.content-container, .content-mt', 10000).catch(() => {});
     await sleep(1000);
     const article = await proxy.eval(targetId, EXTRACT_ARTICLE_JS);
     if (!article) return { error: 'failed to extract article' };
+
+    // 检测飞书链接：如果正文有飞书外链，自动提取飞书内容
+    const feishuLink = article.externalLinks?.find(l => l.href?.includes('feishu.cn'));
+    if (feishuLink) {
+      try {
+        const feishuTargetId = await proxy.newTab(feishuLink.href);
+        await sleep(3000);
+        // 尝试加载飞书 adapter 提取内容
+        const feishuModule = await import('./feishu.mjs').catch(() => null);
+        if (feishuModule?.default?.extract) {
+          const feishuResult = await feishuModule.default.extract(proxy, feishuTargetId, {
+            url: feishuLink.href,
+            pageType: feishuModule.default.detect?.(feishuLink.href) || 'wiki',
+          });
+          article.feishuContent = feishuResult;
+        }
+        await proxy.close(feishuTargetId).catch(() => {});
+      } catch (e) {
+        article.feishuError = e.message;
+      }
+    }
+
     return { ...article, format: 'json' };
   },
 
