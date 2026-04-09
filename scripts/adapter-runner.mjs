@@ -309,8 +309,8 @@ async function main() {
         const info = e.loginInfo || {};
         // 构建 retry 命令（保留原始 --ctx 参数）
         const retryCmd = ctxJson
-          ? `node adapter-runner.mjs retry-after-login ${newTargetId} "${arg}" --ctx '${ctxJson}'`
-          : `node adapter-runner.mjs retry-after-login ${newTargetId} "${arg}"`;
+          ? `node scripts/adapter-runner.mjs retry-after-login ${newTargetId} "${arg}" --ctx '${ctxJson}'`
+          : `node scripts/adapter-runner.mjs retry-after-login ${newTargetId} "${arg}"`;
         console.log(JSON.stringify({
           error: 'login_required',
           loginType: info.type,

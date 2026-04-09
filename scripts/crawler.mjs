@@ -315,6 +315,12 @@ async function main() {
             url,
           );
 
+          // adapter 可能在 extract 内部返回 { error: '...' }（非 throw），需检查
+          if (result.error) {
+            lastError = new Error(result.error);
+            break; // 不重试，adapter 级别的 error 通常不可恢复
+          }
+
           const record = {
             url,
             status: 'ok',

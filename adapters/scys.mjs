@@ -600,7 +600,7 @@ export default {
   // cardIndex: 活动列表中卡片的索引（0-based）
   async openCourseFromActivity(proxy, activityTargetId, cardIndex) {
     // record existing tabs
-    const beforeTabs = await proxy._fetch('/targets');
+    const beforeTabs = await proxy.fetch('/targets');
     const beforeIds = new Set(beforeTabs.map(t => t.targetId));
 
     // click the nth card's "查看手册" button
@@ -616,7 +616,7 @@ export default {
     await sleep(3000);
 
     // find the new tab (course URL)
-    const afterTabs = await proxy._fetch('/targets');
+    const afterTabs = await proxy.fetch('/targets');
     const newTab = afterTabs.find(t => !beforeIds.has(t.targetId) && t.url?.includes('/course/'));
     if (!newTab) return { error: 'no course tab opened' };
 

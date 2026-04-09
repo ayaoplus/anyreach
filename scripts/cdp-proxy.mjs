@@ -691,6 +691,14 @@ const server = http.createServer(async (req, res) => {
         if (e.code === 'ERR_MODULE_NOT_FOUND' || e.code === 'NO_ADAPTER') {
           res.statusCode = 404;
           res.end(JSON.stringify({ error: 'no_adapter', url: targetUrl }));
+        } else if (e.code === 'LOGIN_REQUIRED') {
+          res.statusCode = 401;
+          res.end(JSON.stringify({
+            error: 'login_required',
+            loginType: e.loginInfo?.type || null,
+            screenshotPath: e.loginInfo?.screenshotPath || null,
+            message: e.loginInfo?.message || '需要登录',
+          }));
         } else {
           res.statusCode = 500;
           res.end(JSON.stringify({ error: e.message }));
