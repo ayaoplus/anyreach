@@ -4,14 +4,17 @@
 //   - opportunity: 风向标列表（支持 filter=bid 中标筛选）
 //   - activity:  航海项目列表
 //   - course:    航海手册详情（多章节，逐章提取）
+//   - essence:   精华帖列表（?filter=essence，分页，支持 checkpoint/resume）
 //
 // DOM 关键选择器：
-//   帖子内容:  .content-mt
-//   风向标卡片: .post-item
-//   航海卡片:   .vc-navigation-card
-//   手册侧边栏: .vc-course-sidebar → .catalogue-section → .vc-chapter-item
-//   手册内容:   .content-mt
+//   帖子内容:    .content-mt
+//   风向标卡片:  .post-item
+//   航海卡片:    .vc-navigation-card
+//   手册侧边栏:  .vc-course-sidebar → .catalogue-section → .vc-chapter-item
+//   手册内容:    .content-mt
+//   精华帖卡片:  .compact-card → .title-text / .content-preview / .compact-interactions / .tags
 
+import fs from 'node:fs';
 import { sleep, downloadMedia, scrollToLoad } from './_utils.mjs';
 
 // =========================================================
@@ -438,19 +441,54 @@ export default {
   },
 
   // --- 精华帖列表（?filter=essence，分页模式） ---
+  // ctx 支持：
+  //   maxPages     最多翻页数（默认 5，全量传 999）
+  //   limit        最大卡片数
+  //   resumePage   从第 N 页继续（断点续传，需配合 checkpointFile）
+  //   checkpointFile  每页写一次 checkpoint，格式 { lastPage, cards }
   async _extractEssenceList(proxy, targetId, limit, ctx) {
     await proxy.waitFor(targetId, '.compact-card', 12000).catch(() => {});
     await sleep(1000);
 
     const maxPages = ctx.maxPages || 5;
+    const checkpointFile = ctx.checkpointFile || null;
+
+    // --- 断点续传：读取已有 checkpoint ---
     let allCards = [];
-    let page = 1;
+    let startPage = 1;
+    if (ctx.resumePage && checkpointFile && fs.existsSync(checkpointFile)) {
+      try {
+        const cp = JSON.parse(fs.readFileSync(checkpointFile, 'utf8'));
+        allCards = cp.cards || [];
+        startPage = (cp.lastPage || 0) + 1;
+        // 跳转到目标页（用 arco-pagination jumper input）
+        if (startPage > 1) {
+          await proxy.eval(targetId, `(() => {
+            const input = document.querySelector('.arco-pagination-jumper input');
+            if (!input) return false;
+            input.value = '${startPage}';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+            return true;
+          })()`);
+          await sleep(2000);
+        }
+      } catch { /* checkpoint 损坏时从头开始 */ }
+    }
+
+    let page = startPage;
 
     while (page <= maxPages && allCards.length < limit) {
       const cards = await proxy.eval(targetId, EXTRACT_ESSENCE_CARDS_JS);
       if (!cards || !Array.isArray(cards) || cards.length === 0) break;
 
       allCards.push(...cards);
+
+      // 每页写一次 checkpoint，中断后可从上次页继续
+      if (checkpointFile) {
+        fs.writeFileSync(checkpointFile, JSON.stringify({ lastPage: page, cards: allCards }));
+      }
+
       if (allCards.length >= limit) break;
 
       // 翻页：点击下一页
@@ -462,7 +500,6 @@ export default {
 
       if (!hasNext) break;
       page++;
-      // 等待新一页加载（滚动到顶，等卡片刷新）
       await proxy.eval(targetId, 'window.scrollTo(0,0)');
       await sleep(2000);
     }

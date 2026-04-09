@@ -381,9 +381,12 @@ async function main() {
   }
 
   if (command === 'run') {
-    if (!arg) { console.error('Usage: adapter-runner.mjs run <url>'); process.exit(1); }
+    if (!arg) { console.error('Usage: adapter-runner.mjs run <url> [--ctx <json>]'); process.exit(1); }
+    // --ctx '{"maxPages":10,"limit":300}' 传额外参数给适配器
+    const ctxIdx = process.argv.indexOf('--ctx');
+    const extraCtx = ctxIdx !== -1 ? JSON.parse(process.argv[ctxIdx + 1]) : {};
     try {
-      const result = await runAdapter(arg);
+      const result = await runAdapter(arg, extraCtx);
       console.log(JSON.stringify(result, null, 2));
     } catch (e) {
       if (e.code === 'NO_ADAPTER') {
