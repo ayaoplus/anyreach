@@ -8,7 +8,7 @@
 
 <img src="docs/img/logo.png" alt="AnyReach" width="440" />
 
-*Bring agents anywhere.*
+<h3><em>Bring agents anywhere.</em></h3>
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/ayaoplus/anyreach?style=social)](https://github.com/ayaoplus/anyreach)
