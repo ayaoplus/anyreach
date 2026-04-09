@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import { createBrowser } from '../lib/browser-provider.mjs';
+import { ProxyClient } from '../lib/proxy-client.mjs';
 import { runAdapter } from './adapter-runner.mjs';
 
 // --- 参数解析 ---
@@ -84,28 +85,14 @@ function readUrlList(filePath) {
     .filter(line => line && !line.startsWith('#'));
 }
 
-// --- 轻量 HTTP helper（不依赖 ProxyClient） ---
-async function proxyFetch(proxyBase, path, opts = {}) {
-  const res = await fetch(`${proxyBase}${path}`, opts);
-  const body = await res.json();
-  // 服务端错误时抛出，让调用方的 catch 能感知
-  if (!res.ok && body.error) {
-    const err = new Error(body.error);
-    err.status = res.status;
-    throw err;
-  }
-  return body;
-}
-
-
 // --- Cookie 移植 ---
-async function transplantCookies(userProxyBase, managedProxyBase) {
+async function transplantCookies(userProxy, managedProxy) {
   // 在用户 Chrome 上开一个临时 tab，通过 session 级 CDP 导出所有 cookie
-  const { targetId } = await proxyFetch(userProxyBase, '/new?url=' + encodeURIComponent('about:blank'));
+  const targetId = await userProxy.newTab('about:blank');
 
   try {
     // Network.getAllCookies 返回浏览器所有 cookie（不限当前页域名）
-    const result = await proxyFetch(userProxyBase, `/cdp?target=${targetId}`, {
+    const result = await userProxy.fetch(`/cdp?target=${targetId}`, {
       method: 'POST',
       body: JSON.stringify({ method: 'Network.getAllCookies' }),
     });
@@ -116,18 +103,18 @@ async function transplantCookies(userProxyBase, managedProxyBase) {
     }
 
     const cookies = result.cookies || [];
-    return await injectCookies(managedProxyBase, cookies);
+    return await injectCookies(managedProxy, cookies);
   } finally {
-    await proxyFetch(userProxyBase, `/close?target=${targetId}`).catch(() => {});
+    await userProxy.close(targetId).catch(() => {});
   }
 }
 
 // 向 managed Chrome 注入 cookie，返回 { injected, failed }
-async function injectCookies(managedProxyBase, cookies) {
+async function injectCookies(managedProxy, cookies) {
   if (!cookies.length) return { injected: 0, failed: 0 };
 
   // 开一个临时 tab 用于注入
-  const { targetId } = await proxyFetch(managedProxyBase, '/new?url=' + encodeURIComponent('about:blank'));
+  const targetId = await managedProxy.newTab('about:blank');
 
   let injected = 0;
   let failed = 0;
@@ -148,10 +135,7 @@ async function injectCookies(managedProxyBase, cookies) {
     }
 
     try {
-      const resp = await proxyFetch(managedProxyBase, `/setCookie?target=${targetId}`, {
-        method: 'POST',
-        body: JSON.stringify(params),
-      });
+      const resp = await managedProxy.setCookie(targetId, params);
       if (resp.success === false) { failed++; } else { injected++; }
     } catch {
       failed++;
@@ -159,7 +143,7 @@ async function injectCookies(managedProxyBase, cookies) {
   }
 
   // 关闭临时 tab
-  await proxyFetch(managedProxyBase, `/close?target=${targetId}`).catch(() => {});
+  await managedProxy.close(targetId).catch(() => {});
 
   return { injected, failed };
 }
@@ -195,19 +179,16 @@ function withTimeout(promise, ms, url) {
 }
 
 // --- extractText fallback（无 adapter 时使用） ---
-async function fallbackExtract(url, proxyBase, timeoutMs) {
-  const { targetId } = await proxyFetch(proxyBase, '/new?url=' + encodeURIComponent(url));
-  const closeTab = () => proxyFetch(proxyBase, `/close?target=${targetId}`).catch(() => {});
+async function fallbackExtract(url, proxy, timeoutMs) {
+  const targetId = await proxy.newTab(url);
+  const closeTab = () => proxy.close(targetId).catch(() => {});
 
   try {
     const result = await withTimeout(
       (async () => {
         await new Promise(r => setTimeout(r, 2000));
-        const info = await proxyFetch(proxyBase, `/info?target=${targetId}`);
-        const textResult = await proxyFetch(proxyBase, `/extractText?target=${targetId}`, {
-          method: 'POST',
-          body: JSON.stringify({ scroll: true }),
-        });
+        const info = await proxy.info(targetId);
+        const textResult = await proxy.extractText(targetId, { scroll: true });
         return {
           adapter: 'none',
           pageType: 'generic',
@@ -278,21 +259,22 @@ async function main() {
   process.on('SIGTERM', async () => { await cleanup(); process.exit(143); });
 
   try {
+    // 创建 managed proxy 客户端
+    const managedProxy = new ProxyClient(browser.proxyPort);
+
     // Cookie 移植（仅 managed mode）
     if (browser.mode === 'managed' && opts.copyCookies !== 'false') {
       const shouldCopy = opts.copyCookies === 'true' || opts.copyCookies === 'auto';
       if (shouldCopy) {
         const userProxyPort = parseInt(process.env.CDP_PROXY_PORT) || 3456;
-        const userProxyBase = `http://127.0.0.1:${userProxyPort}`;
+        const userProxy = new ProxyClient(userProxyPort);
 
         try {
           // 检测用户 proxy 是否在线
-          const health = await fetch(`${userProxyBase}/health`, {
-            signal: AbortSignal.timeout(2000)
-          });
-          if (health.ok) {
+          const health = await userProxy.fetch('/health');
+          if (health) {
             log('正在从用户 Chrome 移植 cookie...');
-            const { injected, failed } = await transplantCookies(userProxyBase, browser.proxyBase);
+            const { injected, failed } = await transplantCookies(userProxy, managedProxy);
             log(`cookie 移植完成: ${injected} 成功${failed > 0 ? `, ${failed} 失败` : ''}`);
           } else if (opts.copyCookies === 'true') {
             throw new Error('用户 Chrome proxy 不可用');
@@ -351,7 +333,7 @@ async function main() {
           if (e.code === 'NO_ADAPTER') {
             try {
               // fallbackExtract 内部自带超时 + tab 清理
-              const result = await fallbackExtract(url, browser.proxyBase, opts.timeout);
+              const result = await fallbackExtract(url, managedProxy, opts.timeout);
 
               const record = {
                 url,

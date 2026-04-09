@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { capture as captureLogin, waitForLogin } from '../lib/login-detector.mjs';
+import { ProxyClient } from '../lib/proxy-client.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADAPTERS_DIR = path.join(ROOT, 'adapters');
@@ -21,116 +22,6 @@ const REGISTRY_URL = process.env.ANYREACH_REGISTRY
   || 'https://raw.githubusercontent.com/ayaoplus/anyreach/main/registry.json';
 const RAW_BASE = 'https://raw.githubusercontent.com/ayaoplus/anyreach/main/';
 const PROXY_PORT = Number(process.env.CDP_PROXY_PORT || 3456);
-
-// --- Proxy 客户端（供适配器使用） ---
-class ProxyClient {
-  constructor(port) {
-    this.port = port;
-    this.base = `http://127.0.0.1:${port}`;
-  }
-
-  async _fetch(path, opts = {}) {
-    const res = await fetch(`${this.base}${path}`, opts);
-    return res.json();
-  }
-
-  // 创建新 tab，返回 targetId
-  async newTab(url) {
-    const r = await this._fetch(`/new?url=${encodeURIComponent(url)}`);
-    return r.targetId;
-  }
-
-  // 关闭 tab
-  async close(targetId) {
-    return this._fetch(`/close?target=${targetId}`);
-  }
-
-  // 页面信息
-  async info(targetId) {
-    return this._fetch(`/info?target=${targetId}`);
-  }
-
-  // 执行 JS，返回值
-  async eval(targetId, js) {
-    const r = await this._fetch(`/eval?target=${targetId}`, {
-      method: 'POST', body: js,
-    });
-    if (r.error) throw new Error(r.error);
-    return r.value;
-  }
-
-  // 导航
-  async navigate(targetId, url) {
-    return this._fetch(`/navigate?target=${targetId}&url=${encodeURIComponent(url)}`);
-  }
-
-  // 滚动
-  async scroll(targetId, opts = {}) {
-    const params = new URLSearchParams({ target: targetId, ...opts });
-    return this._fetch(`/scroll?${params}`);
-  }
-
-  // 截图
-  async screenshot(targetId, filePath) {
-    return this._fetch(`/screenshot?target=${targetId}&file=${encodeURIComponent(filePath)}`);
-  }
-
-  // JS 点击
-  async click(targetId, selector) {
-    return this._fetch(`/click?target=${targetId}`, {
-      method: 'POST', body: selector,
-    });
-  }
-
-  // 真实鼠标点击
-  async clickAt(targetId, selector) {
-    return this._fetch(`/clickAt?target=${targetId}`, {
-      method: 'POST', body: selector,
-    });
-  }
-
-  // 提取文本（增强端点）
-  async extractText(targetId, opts = {}) {
-    return this._fetch(`/extractText?target=${targetId}`, {
-      method: 'POST',
-      body: JSON.stringify(opts),
-    });
-  }
-
-  // 填写表单
-  async fill(targetId, fields) {
-    return this._fetch(`/fill?target=${targetId}`, {
-      method: 'POST',
-      body: JSON.stringify(fields),
-    });
-  }
-
-  // 等待元素
-  async waitFor(targetId, selector, timeout = 10000) {
-    return this._fetch(`/waitFor?target=${targetId}&selector=${encodeURIComponent(selector)}&timeout=${timeout}`);
-  }
-
-  // 注入 Cookie
-  async setCookie(targetId, cookie) {
-    return this._fetch(`/setCookie?target=${targetId}`, {
-      method: 'POST',
-      body: JSON.stringify(cookie),
-    });
-  }
-
-  // 获取 Cookie
-  async getCookies(targetId, domain) {
-    const params = domain ? `&domain=${domain}` : '';
-    return this._fetch(`/getCookies?target=${targetId}${params}`);
-  }
-
-  // 注入页面前置脚本（在后续导航时于页面 JS 前执行）
-  async preScript(targetId, js) {
-    return this._fetch(`/preScript?target=${targetId}`, {
-      method: 'POST', body: js,
-    });
-  }
-}
 
 // --- 适配器和提示加载 ---
 
