@@ -250,6 +250,47 @@ const EXTRACT_COURSE_CONTENT_JS = `(() => {
   return { markdown, imgs, videos, textLength: markdown.length };
 })()`;
 
+// --- 精华帖列表卡片（.compact-card，用于 ?filter=essence 首页） ---
+// DOM 路径：
+//   .compact-card > .user-line > .user-info > .avatar-group > span.user-name
+//                                           > span.vc-identity-badge（身份）
+//                                           > span.time-text（日期）
+//              > .content-row > .content-col > .title-line > .vc-essence-badge + .title-text
+//                                           > .content-preview（摘要）
+//                                           > .meta-line > .compact-interactions .interactions .item×3 + .favorite-wrapper
+//                                                       > .tags .tag-item
+const EXTRACT_ESSENCE_CARDS_JS = `(() => {
+  const cards = document.querySelectorAll('.compact-card');
+  return Array.from(cards).map(c => {
+    const author = c.querySelector('.user-name')?.innerText?.trim() || '';
+    const identity = c.querySelector('.vc-identity-badge')?.innerText?.trim() || '';
+    const date = c.querySelector('.time-text')?.innerText?.replace('·', '')?.trim() || '';
+    const title = c.querySelector('.title-text')?.innerText?.trim() || '';
+    const preview = c.querySelector('.content-preview')?.innerText?.trim() || '';
+
+    // 缩略图
+    const thumbnail = c.querySelector('.thumbnail-box img')?.src || '';
+
+    // 互动数据（按顺序：转发/浏览、点赞、评论、收藏）
+    // 用 > 限制直接子元素，避免 .favorite-wrapper 内部的 .item 被重复计入
+    const interactions = c.querySelectorAll('.compact-interactions .interactions > *');
+    const counts = Array.from(interactions).map(el => el.innerText?.trim()).filter(Boolean);
+
+    // 标签
+    const tags = Array.from(c.querySelectorAll('.tags .tag-item'))
+      .map(t => t.innerText?.trim()).filter(Boolean);
+
+    // 链接：区分站内文章链接和外部资源链接
+    const allLinks = Array.from(c.querySelectorAll('a'))
+      .map(a => a.href)
+      .filter(h => h && h.startsWith('http'));
+    const articleLink = allLinks.find(h => h.includes('scys.com/articleDetail')) || '';
+    const externalLinks = allLinks.filter(h => !h.includes('scys.com'));
+
+    return { author, identity, date, title, preview, thumbnail, counts, tags, articleLink, externalLinks };
+  });
+})()`;
+
 // (downloadFile and downloadMedia imported from _utils.mjs)
 
 // =========================================================
@@ -258,13 +299,15 @@ const EXTRACT_COURSE_CONTENT_JS = `(() => {
 export default {
   name: 'scys',
   domains: ['scys.com'],
-  description: '生财有术：帖子、风向标、航海项目、航海手册',
+  description: '生财有术：帖子、风向标、航海项目、航海手册、精华帖',
 
   detect(url) {
     if (url.includes('/articleDetail/')) return 'article';
     if (url.includes('/opportunity')) return 'opportunity';
     if (url.includes('/course/detail/')) return 'course';
     if (url.includes('/activity')) return 'activity';
+    // 精华帖：首页带 filter=essence，或首页不带 filter（默认精华）
+    if (url.includes('filter=essence') || /scys\.com\/?\?/.test(url) || /scys\.com\/?$/.test(url)) return 'essence';
     return 'unknown';
   },
 
@@ -281,8 +324,10 @@ export default {
         return this._extractActivityList(proxy, targetId, limit);
       case 'course':
         return this._extractCourse(proxy, targetId);
+      case 'essence':
+        return this._extractEssenceList(proxy, targetId, limit, ctx);
       default:
-        return { error: `unsupported page type: ${pageType}`, hint: 'supported types: article, opportunity, activity, course' };
+        return { error: `unsupported page type: ${pageType}`, hint: 'supported types: article, opportunity, activity, course, essence' };
     }
   },
 
@@ -390,6 +435,47 @@ export default {
     const cards = await scrollToLoad(proxy, targetId, { extractJS: EXTRACT_ACTIVITY_CARDS_JS, limit, maxScrollAttempts: 10 });
 
     return { listType: 'activity', cards, cardCount: cards.length, format: 'json' };
+  },
+
+  // --- 精华帖列表（?filter=essence，分页模式） ---
+  async _extractEssenceList(proxy, targetId, limit, ctx) {
+    await proxy.waitFor(targetId, '.compact-card', 12000).catch(() => {});
+    await sleep(1000);
+
+    const maxPages = ctx.maxPages || 5;
+    let allCards = [];
+    let page = 1;
+
+    while (page <= maxPages && allCards.length < limit) {
+      const cards = await proxy.eval(targetId, EXTRACT_ESSENCE_CARDS_JS);
+      if (!cards || !Array.isArray(cards) || cards.length === 0) break;
+
+      allCards.push(...cards);
+      if (allCards.length >= limit) break;
+
+      // 翻页：点击下一页
+      const hasNext = await proxy.eval(targetId, `(() => {
+        const nextBtn = document.querySelector('.arco-pagination-item-next:not(.arco-pagination-item-disabled)');
+        if (nextBtn) { nextBtn.click(); return true; }
+        return false;
+      })()`);
+
+      if (!hasNext) break;
+      page++;
+      // 等待新一页加载（滚动到顶，等卡片刷新）
+      await proxy.eval(targetId, 'window.scrollTo(0,0)');
+      await sleep(2000);
+    }
+
+    allCards = allCards.slice(0, limit);
+
+    return {
+      listType: 'essence',
+      cards: allCards,
+      cardCount: allCards.length,
+      pagesScanned: page,
+      format: 'json',
+    };
   },
 
   // --- 航海手册（逐章提取） ---
