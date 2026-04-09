@@ -474,6 +474,7 @@ export default {
 
     return {
       title: meta?.title || '',
+      markdown,
       content: markdown,
       format: 'markdown',
       meta: {
