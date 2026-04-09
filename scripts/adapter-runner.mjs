@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { detect as detectLogin, capture as captureLogin, waitForLogin } from '../lib/login-detector.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADAPTERS_DIR = path.join(ROOT, 'adapters');
@@ -303,6 +304,18 @@ export async function getHint(url) {
   return null;
 }
 
+// 在已有 tab 上执行适配器（不创建/关闭 tab，供内部复用）
+async function _executeAdapter(proxy, targetId, url, opts, adapter) {
+  const pageType = adapter.detect ? adapter.detect(url) : 'default';
+  if (!adapter.extract) {
+    return { adapter: adapter.name, pageType, error: 'adapter has no extract method' };
+  }
+  const ctx = { url, pageType, ...opts };
+  delete ctx.proxyPort;
+  const result = await adapter.extract(proxy, targetId, ctx);
+  return { adapter: adapter.name, pageType, ...result };
+}
+
 // 运行代码适配器（自动下载远程适配器）
 export async function runAdapter(url, opts = {}) {
   let match = await matchUrl(url);
@@ -323,19 +336,29 @@ export async function runAdapter(url, opts = {}) {
   const { adapter } = match;
   const proxy = new ProxyClient(opts.proxyPort || PROXY_PORT);
   const targetId = await proxy.newTab(url);
+  let keepTabOpen = false;
 
   try {
-    const pageType = adapter.detect ? adapter.detect(url) : 'default';
-    if (adapter.extract) {
-      // 传递所有 opts 参数到 ctx（mode、bidOnly、limit 等）
-      const ctx = { url, pageType, ...opts };
-      delete ctx.proxyPort; // proxyPort 不需要传给 adapter
-      const result = await adapter.extract(proxy, targetId, ctx);
-      return { adapter: adapter.name, pageType, ...result };
+    // 等页面基本就绪，检查登录墙
+    await new Promise(r => setTimeout(r, 1500));
+    const loginWall = await detectLogin(proxy, targetId);
+    if (loginWall) {
+      keepTabOpen = true; // 保留 tab，等用户登录后 retry
+      const info = await captureLogin(proxy, targetId);
+      return {
+        error: 'login_required',
+        loginType: info?.type || loginWall.type,
+        screenshotPath: info?.screenshotPath || null,
+        fields: info?.fields || null,
+        message: info?.message || '需要登录',
+        targetId,
+        hint: `登录后运行: node adapter-runner.mjs retry-after-login ${targetId} "${url}"`,
+      };
     }
-    return { adapter: adapter.name, pageType, error: 'adapter has no extract method' };
+
+    return await _executeAdapter(proxy, targetId, url, opts, adapter);
   } finally {
-    await proxy.close(targetId).catch(() => {});
+    if (!keepTabOpen) await proxy.close(targetId).catch(() => {});
   }
 }
 
@@ -410,6 +433,53 @@ async function main() {
     return;
   }
 
+  // retry-after-login <targetId> <url>
+  // 在用户完成登录后，等待登录墙消失，然后在同一个 tab 上重跑 adapter
+  if (command === 'retry-after-login') {
+    const retryTargetId = arg;
+    const retryUrl = process.argv[4];
+    if (!retryTargetId || !retryUrl) {
+      console.error('Usage: adapter-runner.mjs retry-after-login <targetId> <url>');
+      process.exit(1);
+    }
+
+    const proxy = new ProxyClient(PROXY_PORT);
+    console.error('[AnyReach] 等待登录完成（最长 3 分钟）...');
+    const { success, elapsed } = await waitForLogin(proxy, retryTargetId);
+
+    if (!success) {
+      console.log(JSON.stringify({ error: 'login_timeout', hint: '登录超时（3 分钟），请重新运行' }));
+      await proxy.close(retryTargetId).catch(() => {});
+      return;
+    }
+
+    console.error(`[AnyReach] 登录成功（${Math.round(elapsed / 1000)}s），重新提取...`);
+
+    // 导航到目标 URL（刷新已登录的状态）
+    await proxy.navigate(retryTargetId, retryUrl);
+    await new Promise(r => setTimeout(r, 2000));
+
+    let match = await matchUrl(retryUrl);
+    if (match.level === 'remote') {
+      await downloadAdapter(match.remote);
+      match = await matchUrl(retryUrl);
+    }
+
+    try {
+      if (match.level !== 'adapter') {
+        console.log(JSON.stringify({ error: 'no_adapter', url: retryUrl }));
+        return;
+      }
+      const ctxIdx = process.argv.indexOf('--ctx');
+      const extraCtx = ctxIdx !== -1 ? JSON.parse(process.argv[ctxIdx + 1]) : {};
+      const result = await _executeAdapter(proxy, retryTargetId, retryUrl, extraCtx, match.adapter);
+      console.log(JSON.stringify(result, null, 2));
+    } finally {
+      await proxy.close(retryTargetId).catch(() => {});
+    }
+    return;
+  }
+
   if (command === 'download') {
     if (!arg) { console.error('Usage: adapter-runner.mjs download <url>'); process.exit(1); }
     const match = await matchUrl(arg);
@@ -430,11 +500,12 @@ async function main() {
   console.log('AnyReach Adapter Runner');
   console.log('');
   console.log('Usage:');
-  console.log('  node adapter-runner.mjs list              List installed adapters and hints');
-  console.log('  node adapter-runner.mjs check <url>       Check match level (adapter/hint/remote/none)');
-  console.log('  node adapter-runner.mjs run <url>         Run adapter (auto-downloads if remote)');
-  console.log('  node adapter-runner.mjs hint <url>        Get .md hint content for URL');
-  console.log('  node adapter-runner.mjs download <url>    Download remote adapter to local');
+  console.log('  node adapter-runner.mjs list                          List installed adapters and hints');
+  console.log('  node adapter-runner.mjs check <url>                   Check match level (adapter/hint/remote/none)');
+  console.log('  node adapter-runner.mjs run <url> [--ctx <json>]      Run adapter (auto-downloads if remote)');
+  console.log('  node adapter-runner.mjs hint <url>                    Get .md hint content for URL');
+  console.log('  node adapter-runner.mjs download <url>                Download remote adapter to local');
+  console.log('  node adapter-runner.mjs retry-after-login <id> <url>  Wait for login then re-run adapter');
 }
 
 // 仅在 CLI 直接调用时运行 main
