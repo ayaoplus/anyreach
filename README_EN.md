@@ -6,7 +6,7 @@
 
 <div align="center">
 
-<img src="docs/img/logo.png" alt="AnyReach" width="440" />
+<img src="docs/images/logo.png" alt="AnyReach" width="440" />
 
 <big><big><em>Bring agents anywhere.</em></big></big>
 
@@ -22,6 +22,8 @@
 ## What it does
 
 AnyReach connects your AI agent (Claude Code, Codex, OpenClaw) to your daily Chrome browser. The agent operates in background tabs — sharing your login state, invisible to anti-bot detection, and never stealing your browser focus.
+
+![Architecture Overview](docs/images/architecture-overview.png)
 
 Three-tier site knowledge:
 

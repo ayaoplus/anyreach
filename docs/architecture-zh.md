@@ -8,7 +8,7 @@ AnyReach 源于一个朴素的观察：web-access 项目证明了 **AI Agent 最
 
 AnyReach 保留了核心洞察（通过 CDP 连接用户日常 Chrome、共享登录态、在后台 tab 中操作），并在此基础上增加两层：**站点适配器**（可执行的提取代码）和 **提示词**（面向 LLM 的站点知识），辅以**远程注册表**实现按需下载。
 
-![架构总览](images/architecture-overview.png)
+![架构总览](images/architecture-overview-zh.png)
 
 ### 四层架构
 
@@ -22,7 +22,7 @@ AnyReach 保留了核心洞察（通过 CDP 连接用户日常 Chrome、共享�
 
 ### 请求解析流程
 
-![请求流程](images/request-flow.png)
+![请求流程](images/request-flow-zh.png)
 
 ## CDP Proxy
 
@@ -208,7 +208,7 @@ node scripts/adapter-runner.mjs retry-after-login <id> <url>  # 登录后重试
 
 ## 生财有术全量精华帖爬取
 
-![精华帖爬取管线](images/essence-pipeline.png)
+![精华帖爬取管线](images/essence-pipeline-zh.png)
 
 ### 三步流水线
 
