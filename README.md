@@ -23,7 +23,7 @@
 
 AnyReach 将你的 AI Agent（Claude Code、Codex、OpenClaw）连接到你日常使用的 Chrome 浏览器。Agent 在后台标签页中操作——共享你的登录状态，对反爬检测不可见，不会抢占你的浏览器焦点。
 
-![架构总览](docs/images/architecture-overview-zh.png)
+<img src="docs/images/architecture-overview-zh.png" alt="架构总览" width="80%" />
 
 三层站点知识体系：
 

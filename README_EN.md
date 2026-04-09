@@ -23,7 +23,7 @@
 
 AnyReach connects your AI agent (Claude Code, Codex, OpenClaw) to your daily Chrome browser. The agent operates in background tabs — sharing your login state, invisible to anti-bot detection, and never stealing your browser focus.
 
-![Architecture Overview](docs/images/architecture-overview.png)
+<img src="docs/images/architecture-overview.png" alt="Architecture Overview" width="80%" />
 
 Three-tier site knowledge:
 
