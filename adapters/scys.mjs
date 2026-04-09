@@ -355,25 +355,26 @@ export default {
     const article = await proxy.eval(targetId, EXTRACT_ARTICLE_JS);
     if (!article) return { error: 'failed to extract article' };
 
-    // 检测飞书链接：如果正文有飞书外链，自动提取飞书内容
+    // 飞书链接自动跟进：仅处理 wiki/docx（adapter 能力范围内），其他类型静默跳过
     const feishuLink = article.externalLinks?.find(l => l.href?.includes('feishu.cn'));
-    if (feishuLink) {
+    if (feishuLink && /\/(wiki|docx)\//.test(feishuLink.href)) {
+      let feishuTargetId;
       try {
-        const feishuTargetId = await proxy.newTab(feishuLink.href);
-        await sleep(3000);
-        // 尝试加载飞书 adapter 提取内容
         const feishuModule = await import('./feishu.mjs').catch(() => null);
         if (feishuModule?.default?.extract) {
+          feishuTargetId = await proxy.newTab(feishuLink.href);
+          await sleep(3000);
+          const pageType = feishuModule.default.detect?.(feishuLink.href) || 'wiki';
           const feishuResult = await feishuModule.default.extract(proxy, feishuTargetId, {
-            url: feishuLink.href,
-            pageType: feishuModule.default.detect?.(feishuLink.href) || 'wiki',
+            url: feishuLink.href, pageType,
           });
-          article.feishuContent = feishuResult;
+          // 只有拿到实际内容才合并，error 结果静默丢弃
+          if (feishuResult && !feishuResult.error) {
+            article.feishuContent = feishuResult;
+          }
         }
-        await proxy.close(feishuTargetId).catch(() => {});
-      } catch (e) {
-        article.feishuError = e.message;
-      }
+      } catch { /* 飞书提取失败不影响主结果 */ }
+      if (feishuTargetId) await proxy.close(feishuTargetId).catch(() => {});
     }
 
     return { ...article, format: 'json' };
