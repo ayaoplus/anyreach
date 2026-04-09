@@ -3,10 +3,10 @@
 // 三层递进：.mjs 代码适配器 → .md prompt 提示 → 通用模式
 //
 // 用法：
-//   node adapter-runner.mjs check <url>    — 检查匹配层级（adapter/hint/none）
-//   node adapter-runner.mjs run <url>      — 运行代码适配器提取内容
-//   node adapter-runner.mjs hint <url>     — 返回 .md 提示内容
-//   node adapter-runner.mjs list           — 列出所有已安装适配器和提示
+//   node scripts/adapter-runner.mjs check <url>    — 检查匹配层级（adapter/hint/none）
+//   node scripts/adapter-runner.mjs run <url>      — 运行代码适配器提取内容
+//   node scripts/adapter-runner.mjs hint <url>     — 返回 .md 提示内容
+//   node scripts/adapter-runner.mjs list           — 列出所有已安装适配器和提示
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -406,12 +406,12 @@ async function main() {
   console.log('AnyReach Adapter Runner');
   console.log('');
   console.log('Usage:');
-  console.log('  node adapter-runner.mjs list                          List installed adapters and hints');
-  console.log('  node adapter-runner.mjs check <url>                   Check match level (adapter/hint/remote/none)');
-  console.log('  node adapter-runner.mjs run <url> [--ctx <json>]      Run adapter (auto-downloads if remote)');
-  console.log('  node adapter-runner.mjs hint <url>                    Get .md hint content for URL');
-  console.log('  node adapter-runner.mjs download <url>                Download remote adapter to local');
-  console.log('  node adapter-runner.mjs retry-after-login <id> <url>  Wait for login then re-run adapter');
+  console.log('  node scripts/adapter-runner.mjs list                          List installed adapters and hints');
+  console.log('  node scripts/adapter-runner.mjs check <url>                   Check match level (adapter/hint/remote/none)');
+  console.log('  node scripts/adapter-runner.mjs run <url> [--ctx <json>]      Run adapter (auto-downloads if remote)');
+  console.log('  node scripts/adapter-runner.mjs hint <url>                    Get .md hint content for URL');
+  console.log('  node scripts/adapter-runner.mjs download <url>                Download remote adapter to local');
+  console.log('  node scripts/adapter-runner.mjs retry-after-login <id> <url>  Wait for login then re-run adapter');
 }
 
 // 仅在 CLI 直接调用时运行 main

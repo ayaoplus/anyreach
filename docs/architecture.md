@@ -129,7 +129,7 @@ Pages can detect automation by probing the Chrome debug port (`fetch('http://127
 | Endpoint | Method | Body | Description |
 |----------|--------|------|-------------|
 | `/preScript?target=` | POST | JS code | Inject script via `Page.addScriptToEvaluateOnNewDocument`. Runs before page JS on every navigation. Used for intercepting MediaSource, autoplay, etc. |
-| `/adapter?url=` | POST | — | Match URL to site adapter and run extraction. Auto-downloads from registry if needed. Returns structured content or 404 |
+| `/adapter?url=` | POST | — | Match URL to site adapter and run extraction. Auto-downloads from registry if needed. Returns structured content, 401 `login_required` (with loginType/screenshotPath), or 404 `no_adapter` |
 
 #### CDP pass-through & event collection
 
@@ -220,11 +220,11 @@ proxy.preScript(targetId, js)        → { identifier }
 CLI tool and importable module:
 
 ```bash
-node adapter-runner.mjs list              # List local adapters and hints
-node adapter-runner.mjs check <url>       # Check match level (adapter/hint/remote/none)
-node adapter-runner.mjs run <url>         # Run adapter (auto-downloads if remote)
-node adapter-runner.mjs hint <url>        # Get .md hint content
-node adapter-runner.mjs download <url>    # Pre-fetch remote adapter
+node scripts/adapter-runner.mjs list              # List local adapters and hints
+node scripts/adapter-runner.mjs check <url>       # Check match level (adapter/hint/remote/none)
+node scripts/adapter-runner.mjs run <url>         # Run adapter (auto-downloads if remote)
+node scripts/adapter-runner.mjs hint <url>        # Get .md hint content
+node scripts/adapter-runner.mjs download <url>    # Pre-fetch remote adapter
 ```
 
 ### Remote registry

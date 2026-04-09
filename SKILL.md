@@ -103,7 +103,7 @@ CLI `run` 命令会截获此错误，输出：
   "loginType": "qr",
   "screenshotPath": "/tmp/anyreach-login-xxx.png",
   "targetId": "ABCD1234",
-  "hint": "登录后运行: node adapter-runner.mjs retry-after-login ABCD1234 \"URL\" --ctx '...'"
+  "hint": "登录后运行: node scripts/adapter-runner.mjs retry-after-login ABCD1234 \"URL\" --ctx '...'"
 }
 ```
 
