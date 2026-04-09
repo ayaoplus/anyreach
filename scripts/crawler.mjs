@@ -177,14 +177,17 @@ async function runPool(items, concurrency, worker) {
   await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => next()));
 }
 
-// --- 带超时的 Promise（超时后执行清理回调） ---
-function withTimeout(promise, ms, url, onTimeout) {
+/**
+ * 给 Promise 加超时限制。超时后 reject，但不负责资源清理。
+ * 调用方必须在外部 try/finally 中自行关闭 tab 等资源。
+ * 注意：超时只是让 race 提前 reject，原始 promise 仍会继续执行直到自然结束。
+ */
+function withTimeout(promise, ms, url) {
   let timer;
   return Promise.race([
     promise.finally(() => clearTimeout(timer)),
     new Promise((_, reject) => {
       timer = setTimeout(() => {
-        if (onTimeout) onTimeout();
         reject(new Error(`超时 (${ms}ms): ${url}`));
       }, ms);
     }),
@@ -214,7 +217,7 @@ async function fallbackExtract(url, proxyBase, timeoutMs) {
           length: textResult.length || 0,
         };
       })(),
-      timeoutMs, url, closeTab,
+      timeoutMs, url,
     );
     return result;
   } finally {
