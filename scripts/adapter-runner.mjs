@@ -227,28 +227,26 @@ export async function runAdapter(url, opts = {}) {
   const { adapter } = match;
   const proxy = new ProxyClient(opts.proxyPort || PROXY_PORT);
   const targetId = await proxy.newTab(url);
-  let keepTabOpen = false;
 
   try {
-    // 等页面基本就绪，检查登录墙（capture 内部已调用 detect，避免重复 eval）
+    // 等页面基本就绪，检查登录墙
     await new Promise(r => setTimeout(r, 1500));
     const loginInfo = await captureLogin(proxy, targetId);
     if (loginInfo) {
-      keepTabOpen = true; // 保留 tab，等用户登录后 retry
-      return {
-        error: 'login_required',
-        loginType: loginInfo.type,
-        screenshotPath: loginInfo.screenshotPath || null,
-        fields: loginInfo.fields || null,
-        message: loginInfo.message || '需要登录',
-        targetId,
-        hint: `登录后运行: node adapter-runner.mjs retry-after-login ${targetId} "${url}"`,
-      };
+      // 抛出 LOGIN_REQUIRED error（带 loginInfo），让调用方决定如何处理
+      // CLI run 命令会截获并保留 tab；crawler 等批量场景正常关 tab 走 error 流程
+      const err = new Error(loginInfo.message || 'login required');
+      err.code = 'LOGIN_REQUIRED';
+      err.loginInfo = loginInfo;
+      err.targetId = targetId;
+      throw err;
     }
 
     return await _executeAdapter(proxy, targetId, url, opts, adapter);
   } finally {
-    if (!keepTabOpen) await proxy.close(targetId).catch(() => {});
+    // 默认总是关 tab，防止泄漏
+    // CLI run 命令在截获 LOGIN_REQUIRED 后会重新打开 tab（不依赖保留）
+    await proxy.close(targetId).catch(() => {});
   }
 }
 
@@ -295,15 +293,33 @@ async function main() {
 
   if (command === 'run') {
     if (!arg) { console.error('Usage: adapter-runner.mjs run <url> [--ctx <json>]'); process.exit(1); }
-    // --ctx '{"maxPages":10,"limit":300}' 传额外参数给适配器
     const ctxIdx = process.argv.indexOf('--ctx');
     const extraCtx = ctxIdx !== -1 ? JSON.parse(process.argv[ctxIdx + 1]) : {};
+    const ctxJson = ctxIdx !== -1 ? process.argv[ctxIdx + 1] : null;
     try {
       const result = await runAdapter(arg, extraCtx);
       console.log(JSON.stringify(result, null, 2));
     } catch (e) {
       if (e.code === 'NO_ADAPTER') {
         console.log(JSON.stringify({ error: 'no_adapter', url: arg }));
+      } else if (e.code === 'LOGIN_REQUIRED') {
+        // 交互场景：为用户打开新 tab 等待登录，截图二维码
+        const proxy = new ProxyClient(PROXY_PORT);
+        const newTargetId = await proxy.newTab(arg);
+        const info = e.loginInfo || {};
+        // 构建 retry 命令（保留原始 --ctx 参数）
+        const retryCmd = ctxJson
+          ? `node adapter-runner.mjs retry-after-login ${newTargetId} "${arg}" --ctx '${ctxJson}'`
+          : `node adapter-runner.mjs retry-after-login ${newTargetId} "${arg}"`;
+        console.log(JSON.stringify({
+          error: 'login_required',
+          loginType: info.type,
+          screenshotPath: info.screenshotPath || null,
+          fields: info.fields || null,
+          message: info.message || '需要登录',
+          targetId: newTargetId,
+          hint: `登录后运行: ${retryCmd}`,
+        }, null, 2));
       } else {
         console.error('Error:', e.message);
         process.exit(1);

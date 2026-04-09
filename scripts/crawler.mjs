@@ -329,6 +329,11 @@ async function main() {
           break;
 
         } catch (e) {
+          // 登录墙 → 直接记 error，不重试（用户需先登录）
+          if (e.code === 'LOGIN_REQUIRED') {
+            lastError = e;
+            break; // 不重试，跳出重试循环
+          }
           // 无 adapter → fallback 到 extractText
           if (e.code === 'NO_ADAPTER') {
             try {

@@ -462,9 +462,9 @@ export default {
         const cp = JSON.parse(fs.readFileSync(checkpointFile, 'utf8'));
         allCards = cp.cards || [];
         startPage = (cp.lastPage || 0) + 1;
-        // 跳转到目标页（用 arco-pagination jumper input）
+        // 跳转到目标页（用 arco-pagination jumper input），并校验是否跳成功
         if (startPage > 1) {
-          await proxy.eval(targetId, `(() => {
+          const jumped = await proxy.eval(targetId, `(() => {
             const input = document.querySelector('.arco-pagination-jumper input');
             if (!input) return false;
             input.value = '${startPage}';
@@ -473,6 +473,16 @@ export default {
             return true;
           })()`);
           await sleep(2000);
+
+          // 校验当前 active 页码是否符合预期
+          const activePage = await proxy.eval(targetId,
+            `parseInt(document.querySelector('.arco-pagination-item-active')?.innerText) || 1`
+          );
+          if (!jumped || activePage !== startPage) {
+            console.warn(`[scys] resume: jump to page ${startPage} failed (landed on ${activePage}), restarting`);
+            startPage = 1;
+            allCards = [];
+          }
         }
       } catch (e) { console.warn(`[scys] checkpoint corrupted, starting fresh: ${e.message}`); }
     }
