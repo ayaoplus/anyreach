@@ -266,28 +266,35 @@ const EXTRACT_COURSE_CONTENT_JS = `(() => {
 })()`;
 
 // --- 精华帖列表卡片（.compact-card，用于 ?filter=essence 首页） ---
-// DOM 路径：
-//   .compact-card > .user-line > .user-info > .avatar-group > span.user-name
-//                                           > span.vc-identity-badge（身份）
-//                                           > span.time-text（日期）
-//              > .content-row > .content-col > .title-line > .vc-essence-badge + .title-text
-//                                           > .content-preview（摘要）
-//                                           > .meta-line > .compact-interactions .interactions .item×3 + .favorite-wrapper
-//                                                       > .tags .tag-item
+// 数据来源：DOM 卡片 + Pinia sessionPostStore.postList（用于 articleLink）
+// DOM 卡片没有 <a> 链接到 articleDetail（Vue Router @click 跳转），
+// 所以从 Pinia store 的 postList 拿 entityType/entityId 构造 URL
 const EXTRACT_ESSENCE_CARDS_JS = `(() => {
+  // 从 Pinia store 拿帖子 ID 映射（标题 → articleDetail URL）
+  var postUrlMap = {};
+  try {
+    var pinia = document.querySelector('#app')?.__vue_app__?.config?.globalProperties?.$pinia;
+    var posts = pinia?.state?.value?.sessionPostStore?.postList || [];
+    posts.forEach(function(p) {
+      if (p.entityType && p.entityId) {
+        var url = 'https://scys.com/articleDetail/' + p.entityType + '/' + p.entityId;
+        // 用 entityId 作 key（唯一），同时建标题索引作 fallback
+        postUrlMap[p.entityId] = url;
+        if (p.title) postUrlMap[p.title.trim()] = url;
+      }
+    });
+  } catch(e) {}
+
   const cards = document.querySelectorAll('.compact-card');
-  return Array.from(cards).map(c => {
+  return Array.from(cards).map((c, idx) => {
     const author = c.querySelector('.user-name')?.innerText?.trim() || '';
     const identity = c.querySelector('.vc-identity-badge')?.innerText?.trim() || '';
     const date = c.querySelector('.time-text')?.innerText?.replace('·', '')?.trim() || '';
     const title = c.querySelector('.title-text')?.innerText?.trim() || '';
     const preview = c.querySelector('.content-preview')?.innerText?.trim() || '';
-
-    // 缩略图
     const thumbnail = c.querySelector('.thumbnail-box img')?.src || '';
 
-    // 互动数据（按顺序：转发/浏览、点赞、评论、收藏）
-    // 用 > 限制直接子元素，避免 .favorite-wrapper 内部的 .item 被重复计入
+    // 互动数据（按顺序：锚点、点赞、评论、收藏）
     const interactions = c.querySelectorAll('.compact-interactions .interactions > *');
     const counts = Array.from(interactions).map(el => el.innerText?.trim()).filter(Boolean);
 
@@ -295,12 +302,23 @@ const EXTRACT_ESSENCE_CARDS_JS = `(() => {
     const tags = Array.from(c.querySelectorAll('.tags .tag-item'))
       .map(t => t.innerText?.trim()).filter(Boolean);
 
-    // 链接：区分站内文章链接和外部资源链接
-    const allLinks = Array.from(c.querySelectorAll('a'))
+    // 外部链接（飞书等，从正文预览区 <a> 标签提取）
+    const externalLinks = Array.from(c.querySelectorAll('a'))
       .map(a => a.href)
-      .filter(h => h && h.startsWith('http'));
-    const articleLink = allLinks.find(h => h.includes('scys.com/articleDetail')) || '';
-    const externalLinks = allLinks.filter(h => !h.includes('scys.com'));
+      .filter(h => h && h.startsWith('http') && !h.includes('scys.com'));
+
+    // articleLink：优先从 Pinia store 构造（按位置索引匹配，store 和 DOM 卡片顺序一致）
+    var piniaPosts = [];
+    try { piniaPosts = document.querySelector('#app')?.__vue_app__?.config?.globalProperties?.$pinia?.state?.value?.sessionPostStore?.postList || []; } catch(e) {}
+    var storePost = piniaPosts[idx];
+    var articleLink = '';
+    if (storePost?.entityType && storePost?.entityId) {
+      articleLink = 'https://scys.com/articleDetail/' + storePost.entityType + '/' + storePost.entityId;
+    }
+    // fallback：从 <a> 标签里找
+    if (!articleLink) {
+      articleLink = Array.from(c.querySelectorAll('a')).map(a => a.href).find(h => h?.includes('scys.com/articleDetail')) || '';
+    }
 
     return { author, identity, date, title, preview, thumbnail, counts, tags, articleLink, externalLinks };
   });
