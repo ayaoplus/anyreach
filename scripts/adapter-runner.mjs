@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { detect as detectLogin, capture as captureLogin, waitForLogin } from '../lib/login-detector.mjs';
+import { capture as captureLogin, waitForLogin } from '../lib/login-detector.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ADAPTERS_DIR = path.join(ROOT, 'adapters');
@@ -339,18 +339,17 @@ export async function runAdapter(url, opts = {}) {
   let keepTabOpen = false;
 
   try {
-    // 等页面基本就绪，检查登录墙
+    // 等页面基本就绪，检查登录墙（capture 内部已调用 detect，避免重复 eval）
     await new Promise(r => setTimeout(r, 1500));
-    const loginWall = await detectLogin(proxy, targetId);
-    if (loginWall) {
+    const loginInfo = await captureLogin(proxy, targetId);
+    if (loginInfo) {
       keepTabOpen = true; // 保留 tab，等用户登录后 retry
-      const info = await captureLogin(proxy, targetId);
       return {
         error: 'login_required',
-        loginType: info?.type || loginWall.type,
-        screenshotPath: info?.screenshotPath || null,
-        fields: info?.fields || null,
-        message: info?.message || '需要登录',
+        loginType: loginInfo.type,
+        screenshotPath: loginInfo.screenshotPath || null,
+        fields: loginInfo.fields || null,
+        message: loginInfo.message || '需要登录',
         targetId,
         hint: `登录后运行: node adapter-runner.mjs retry-after-login ${targetId} "${url}"`,
       };
