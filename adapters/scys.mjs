@@ -474,7 +474,7 @@ export default {
           })()`);
           await sleep(2000);
         }
-      } catch { /* checkpoint 损坏时从头开始 */ }
+      } catch (e) { console.warn(`[scys] checkpoint corrupted, starting fresh: ${e.message}`); }
     }
 
     let page = startPage;
@@ -485,9 +485,11 @@ export default {
 
       allCards.push(...cards);
 
-      // 每页写一次 checkpoint，中断后可从上次页继续
+      // 每页写一次 checkpoint（原子写入：先写临时文件再 rename，防止进程崩溃导致文件损坏）
       if (checkpointFile) {
-        fs.writeFileSync(checkpointFile, JSON.stringify({ lastPage: page, cards: allCards }));
+        const tmpFile = checkpointFile + '.tmp';
+        fs.writeFileSync(tmpFile, JSON.stringify({ lastPage: page, cards: allCards }));
+        fs.renameSync(tmpFile, checkpointFile);
       }
 
       if (allCards.length >= limit) break;
