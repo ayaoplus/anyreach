@@ -6,14 +6,12 @@
 
 <div align="center">
 
-<img src="docs/img/logo.png" alt="AnyReach" width="320" />
+<img src="docs/img/logo.png" alt="AnyReach" width="400" />
 
-**Intelligent web access for AI agents**
+**Bring agents anywhere.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/ayaoplus/anyreach?style=social)](https://github.com/ayaoplus/anyreach)
-
-*Bring agents anywhere.*
 
 [Quick Start](#install) · [CDP API](#cdp-proxy-api) · [Adapter System](#adapter-system) · [Installed Adapters](#installed-adapters)
 

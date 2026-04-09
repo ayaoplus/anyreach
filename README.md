@@ -6,14 +6,12 @@
 
 <div align="center">
 
-<img src="docs/img/logo.png" alt="AnyReach" width="320" />
+<img src="docs/img/logo.png" alt="AnyReach" width="400" />
 
-**AI Agent 的智能联网工具**
+**Bring agents anywhere.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/ayaoplus/anyreach?style=social)](https://github.com/ayaoplus/anyreach)
-
-*Bring agents anywhere.*
 
 [快速开始](#安装) · [CDP API](#cdp-proxy-api) · [适配器系统](#适配器系统) · [已有适配器](#已有适配器)
 
