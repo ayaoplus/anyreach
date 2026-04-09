@@ -68,8 +68,8 @@ Rollback: git revert <commit>
 ## Architecture
 
 ```text
-scripts/          → CDP Proxy + environment check + adapter runner + crawler
-lib/              → Shared modules (browser-provider)
+scripts/          → CDP Proxy + environment check + adapter runner + crawler + collect-urls
+lib/              → Shared modules (proxy-client, browser-provider, login-detector)
 adapters/         → Site-specific extraction logic (one .mjs per domain)
 references/       → API docs, loaded on demand
 docs/             → Technical deep-dives (feishu parsing, crawler design, etc.)
@@ -83,6 +83,7 @@ SKILL.md          → Agent-facing strategy prompt
 - **CDP Proxy over Playwright**: Direct connection to user's daily Chrome preserves login state, avoids detection, supports parallel background tabs.
 - **Adapter pattern**: Site-specific code is executable knowledge, not text hints. When an adapter exists, skip LLM-driven DOM exploration entirely.
 - **Dual browser mode for crawler**: User mode attaches to daily Chrome (login state), managed mode spawns isolated Chrome + CDP Proxy (clean, concurrent-safe). Cookie transplant bridges login state via `Network.getAllCookies` → `Network.setCookie`.
+- **Universal login wall detection**: `lib/login-detector.mjs` detects QR/form/unknown login walls via DOM + text patterns, scoped to modal/dialog areas to avoid false positives. `runAdapter()` throws `LOGIN_REQUIRED` (never returns with open tabs). CLI captures QR screenshots for user; crawler records error without retry.
 - **Scheduling-level timeout**: Crawler `--timeout` is scheduling-level only — it unblocks the worker but does not cancel the underlying `runAdapter()`. Managed Chrome shutdown is the final cleanup. Execution-level cancel via AbortSignal is planned for V2.
 
 ## Coding Rules

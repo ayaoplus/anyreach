@@ -89,9 +89,30 @@ curl -s "http://localhost:3456/getCookies?target=ID&domain=x.com"    # 获取 Co
 - `/scroll` 到底部触发懒加载；提取图片 URL 前先滚动确保加载完成
 - DOM 有选择器不可跨越的边界（Shadow DOM、iframe），eval 递归遍历可穿透
 
-### 登录判断
+### 登录墙检测
 
-打开页面后先尝试获取内容。仅当内容无法获取且登录能解决时，提示用户在 Chrome 中登录。
+`runAdapter()` 在加载页面后自动检测登录墙（二维码/账密/其他），全站点通用。
+
+检测到登录墙时 **throw `LOGIN_REQUIRED` error**（不是 return），确保 tab 始终关闭，无泄漏。
+
+CLI `run` 命令会截获此错误，输出：
+
+```json
+{
+  "error": "login_required",
+  "loginType": "qr",
+  "screenshotPath": "/tmp/anyreach-login-xxx.png",
+  "targetId": "ABCD1234",
+  "hint": "登录后运行: node adapter-runner.mjs retry-after-login ABCD1234 \"URL\" --ctx '...'"
+}
+```
+
+处理流程：
+1. Agent 用 Read 读 `screenshotPath` 展示二维码给用户
+2. 用户在 Chrome 中扫码/登录
+3. Agent 运行 hint 中的 `retry-after-login` 命令（自动等待登录完成 → 重新提取）
+
+**批量场景**（crawler）：登录墙记为 error，不重试，不会误记为成功。
 
 ### 任务结束
 
@@ -117,10 +138,20 @@ node "<anyreach_dir>/scripts/adapter-runner.mjs" check "URL"
 `run` 命令遇到 `remote` 时自动下载到本地，无需手动操作。
 
 ```bash
-node "<anyreach_dir>/scripts/adapter-runner.mjs" list               # 列出本地适配器
-node "<anyreach_dir>/scripts/adapter-runner.mjs" run "URL"          # 运行（自动下载）
-node "<anyreach_dir>/scripts/adapter-runner.mjs" hint "URL"         # 获取 .md 提示
-node "<anyreach_dir>/scripts/adapter-runner.mjs" download "URL"     # 手动下载远程适配器
+node "<anyreach_dir>/scripts/adapter-runner.mjs" list                          # 列出本地适配器
+node "<anyreach_dir>/scripts/adapter-runner.mjs" run "URL" [--ctx <json>]      # 运行适配器
+node "<anyreach_dir>/scripts/adapter-runner.mjs" hint "URL"                    # 获取 .md 提示
+node "<anyreach_dir>/scripts/adapter-runner.mjs" download "URL"                # 手动下载远程适配器
+node "<anyreach_dir>/scripts/adapter-runner.mjs" retry-after-login <id> <url>  # 登录后重试
+```
+
+URL 列表提取（配合 crawler 使用）：
+
+```bash
+node "<anyreach_dir>/scripts/collect-urls.mjs" --input result.json --output urls.txt
+# --only-internal     仅站内文章链接
+# --only-external     仅外部链接（飞书等）
+# --filter <domain>   按域名过滤（可重复）
 ```
 
 `run` 支持 `--ctx <json>` 传递适配器参数：
