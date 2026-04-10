@@ -416,6 +416,17 @@ export default {
         if (moreBlocks) {
           workerBlockCount = Object.keys(moreBlocks).length;
           allBlocks = { ...allBlocks, ...moreBlocks };
+
+          // 修补父 block 的 children 数组：cursor 返回的新 block 有 parent_id，
+          // 但父 block 的 children 可能不包含新 block ID（飞书分 slice 时 children 可能被截断）
+          for (const [blockId, block] of Object.entries(moreBlocks)) {
+            const parentId = block.data?.parent_id;
+            if (parentId && allBlocks[parentId]?.data?.children) {
+              if (!allBlocks[parentId].data.children.includes(blockId)) {
+                allBlocks[parentId].data.children.push(blockId);
+              }
+            }
+          }
         }
       } catch (e) {
         // 获取失败，用已有数据继续（部分内容）
