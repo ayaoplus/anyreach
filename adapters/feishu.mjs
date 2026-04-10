@@ -14,7 +14,7 @@
 //   Worker 请求 /space/api/docx/pages/client_vars 接口加载剩余 block。
 //   我们通过 CDP 的 Worker session 重放这些请求来获取完整数据。
 
-import { sleep } from './_utils.mjs';
+// sleep 不再需要（page-level fetch 替代了 Worker 拦截方案的 10s 等待）
 
 // 等待飞书文档数据加载完成
 const WAIT_DATA_JS = `new Promise((resolve) => {
@@ -310,81 +310,47 @@ function blocksToMarkdown(allBlocks, rootId) {
   return { markdown, images };
 }
 
-// 通过刷新页面 + autoAttach 捕获 Worker，从 Worker 获取后续 slice 的 block 数据
-// 必须在页面加载前设置 autoAttach，否则已存在的 Worker 不会被捕获
-async function fetchMissingBlocks(proxy, targetId, pageUrl) {
-  const proxyBase = `http://127.0.0.1:${proxy.port}`;
+// 通过 page-level fetch 直接调飞书 API 获取后续 slice 的 block 数据
+// 比 Worker 拦截方案更稳定：不依赖 autoAttach/Worker 创建时序
+// API: GET /space/api/docx/pages/client_vars?id={docId}&mode=7&limit=500&cursor={cursor}
+async function fetchMissingBlocks(proxy, targetId) {
+  const resultRaw = await proxy.eval(targetId, `(async () => {
+    var d = window.DATA?.clientVars?.data;
+    if (!d?.has_more || !d?.next_cursors?.length) return JSON.stringify(null);
 
-  // 1. 设置 autoAttach + waitForDebugger（Worker 创建时暂停，proxy 自动启用 Network 后恢复）
-  await cdpCall(proxyBase, targetId, 'Target.setAutoAttach', {
-    autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
-  });
+    var allNewBlocks = {};
+    var cursors = d.next_cursors;
+    var docId = d.id;
+    var maxPages = 10; // 安全上限，防止无限循环
 
-  // 2. 开始事件收集
-  const colResp = await fetch(`${proxyBase}/events/start?target=${targetId}`, {
-    method: 'POST', body: JSON.stringify({ maxEvents: 100 }),
-  }).then(r => r.json());
-  const collectorId = colResp.collectorId;
+    for (var i = 0; i < maxPages && cursors && cursors.length > 0; i++) {
+      var cursor = cursors[0];
+      var url = '/space/api/docx/pages/client_vars?id=' + docId + '&mode=7&limit=500&cursor=' + encodeURIComponent(cursor);
 
-  // 3. 刷新页面，触发 Worker 重新创建
-  await fetch(`${proxyBase}/navigate?target=${targetId}&url=${encodeURIComponent(pageUrl)}`).then(r => r.json());
+      try {
+        var resp = await fetch(url);
+        var json = await resp.json();
+        var data = json?.data;
+        if (!data?.block_map) break;
 
-  // 4. 等待页面和 Worker 加载完成
-  await sleep(10000);
+        Object.assign(allNewBlocks, data.block_map);
 
-  // 5. 从事件中找到 Worker session
-  const events = await fetch(`${proxyBase}/events/get?id=${collectorId}`).then(r => r.json());
-  await fetch(`${proxyBase}/events/stop?id=${collectorId}`).then(r => r.json());
-
-  let workerSessionId = null;
-  for (const e of events.events || []) {
-    if (e.method === 'Target.attachedToTarget') {
-      const info = e.params?.targetInfo || {};
-      if (info.type === 'worker') {
-        workerSessionId = e.params.sessionId;
-        break;
-      }
+        // 检查是否还有更多
+        if (!data.has_more || !data.next_cursors?.length) break;
+        cursors = data.next_cursors;
+      } catch { break; }
     }
-  }
 
-  if (!workerSessionId) return null;
+    return JSON.stringify(allNewBlocks);
+  })()`);
 
-  // 6. 从 Worker 的 performance entries 获取 API URL，重新 fetch 获取 block 数据
-  const result = await cdpCall(proxyBase, null, 'Runtime.evaluate', {
-    expression: `(async () => {
-      const urls = performance.getEntriesByType("resource").map(e => e.name);
-      const allBlocks = {};
-      for (const url of urls) {
-        try {
-          const resp = await fetch(url);
-          const data = await resp.json();
-          Object.assign(allBlocks, data?.data?.block_map || {});
-        } catch {}
-      }
-      return JSON.stringify(allBlocks);
-    })()`,
-    awaitPromise: true,
-    returnByValue: true,
-  }, workerSessionId);
-
-  if (!result?.value) return null;
-
+  if (!resultRaw) return null;
   try {
-    return JSON.parse(result.value);
+    const blocks = JSON.parse(resultRaw);
+    return blocks && Object.keys(blocks).length > 0 ? blocks : null;
   } catch {
     return null;
   }
-}
-
-// 发送 CDP 命令的辅助函数
-async function cdpCall(proxyBase, targetId, method, params, sessionId) {
-  const query = sessionId ? `session=${sessionId}` : `target=${targetId}`;
-  const resp = await fetch(`${proxyBase}/cdp?${query}`, {
-    method: 'POST',
-    body: JSON.stringify({ method, params }),
-  });
-  const data = await resp.json();
-  return data?.result ?? data;
 }
 
 export default {
@@ -443,29 +409,17 @@ export default {
     let rootId = struct.root_id;
     let workerBlockCount = 0;
 
-    // 如果有后续 slice，刷新页面后从 Worker 获取完整数据
+    // 如果有后续 slice，直接通过 page-level fetch 获取剩余 block
     if (struct.has_more) {
       try {
-        const workerBlocks = await fetchMissingBlocks(proxy, targetId, ctx.url);
-        if (workerBlocks) {
-          workerBlockCount = Object.keys(workerBlocks).length;
-          // Worker 返回的数据包含所有 slice，可能与初始数据重叠
-          allBlocks = { ...allBlocks, ...workerBlocks };
-
-          // 刷新后 window.DATA 也更新了，重新读取以获取最新的 block_map
-          const newStructRaw = await proxy.eval(targetId, GET_DOC_STRUCTURE_JS);
-          if (newStructRaw) {
-            try {
-              const newStruct = JSON.parse(newStructRaw);
-              // 合并刷新后的主线程数据
-              allBlocks = { ...allBlocks, ...newStruct.block_map };
-              rootId = newStruct.root_id || rootId;
-            } catch { /* 用已有数据 */ }
-          }
+        const moreBlocks = await fetchMissingBlocks(proxy, targetId);
+        if (moreBlocks) {
+          workerBlockCount = Object.keys(moreBlocks).length;
+          allBlocks = { ...allBlocks, ...moreBlocks };
         }
       } catch (e) {
-        // Worker 获取失败，用已有数据继续（部分内容）
-        console.error('[feishu] Worker block fetch failed:', e.message);
+        // 获取失败，用已有数据继续（部分内容）
+        console.error('[feishu] block fetch failed:', e.message);
       }
     }
 
