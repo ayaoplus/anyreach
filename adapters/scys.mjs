@@ -45,14 +45,50 @@ const EXTRACT_ARTICLE_JS = `(() => {
   const title = titleLine?.querySelector('.title-text, [class*=title]')?.innerText?.trim()
     || titleLine?.innerText?.replace('精华', '')?.trim() || '';
 
-  // ★ 正文（只取 .content-container，排除评论区）
+  // ★ 正文：按 DOM 顺序遍历，生成带内联图片的 markdown
+  // post-content 内部是 P/H1/H2/... 元素交替，图片嵌在 P 里
   const contentEl = main.querySelector('.content-container');
-  const text = contentEl?.innerText?.trim() || '';
+  const postContent = contentEl?.querySelector('.post-content') || contentEl;
+  const mdLines = [];
+  const imgs = [];
 
-  // 正文中的图片
-  const imgs = Array.from((contentEl || main).querySelectorAll('img'))
-    .map(i => i.src)
-    .filter(s => s && !s.includes('avatar') && !s.includes('emoji'));
+  if (postContent) {
+    Array.from(postContent.childNodes).forEach(function(node) {
+      if (node.nodeType === 3) {
+        // 纯文本节点
+        var t = node.textContent?.trim();
+        if (t) mdLines.push(t);
+        return;
+      }
+      if (node.nodeType !== 1) return;
+      var tag = node.tagName;
+      var img = node.querySelector('img');
+
+      // 图片节点（可能在 P 里，也可能是独立 IMG）
+      if (img && img.src && !img.src.includes('avatar') && !img.src.includes('emoji')) {
+        imgs.push(img.src);
+        mdLines.push('![图片](' + img.src + ')');
+        mdLines.push('');
+        // 如果 P 里除了图片还有文字，也输出
+        var siblingText = node.innerText?.replace(img.alt || '', '')?.trim();
+        if (siblingText) mdLines.push(siblingText);
+        return;
+      }
+
+      // 标题
+      if (tag === 'H1') { mdLines.push(''); mdLines.push('## ' + (node.innerText?.trim() || '')); mdLines.push(''); return; }
+      if (tag === 'H2') { mdLines.push(''); mdLines.push('### ' + (node.innerText?.trim() || '')); mdLines.push(''); return; }
+      if (tag === 'H3') { mdLines.push(''); mdLines.push('#### ' + (node.innerText?.trim() || '')); mdLines.push(''); return; }
+
+      // 普通段落
+      var text = node.innerText?.trim();
+      if (text) { mdLines.push(text); mdLines.push(''); }
+    });
+  }
+
+  var markdown = mdLines.join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
+  // 兼容：text 保留纯文本（不含图片标记），markdown 含图片位置
+  var text = contentEl?.innerText?.trim() || '';
 
   // 外部链接（飞书等，仅从正文区提取）
   const externalLinks = Array.from((contentEl || main).querySelectorAll('a'))
@@ -68,7 +104,7 @@ const EXTRACT_ARTICLE_JS = `(() => {
   const counts = Array.from(interactions?.querySelectorAll('.item, .favorite-wrapper') || [])
     .map(el => el.innerText?.trim()).filter(Boolean);
 
-  return { title, author, identity, date, text, imgs, externalLinks, tags, interactionCounts: counts };
+  return { title, author, identity, date, markdown, text, imgs, externalLinks, tags, interactionCounts: counts };
 })()`;
 
 // --- 风向标列表卡片（预览模式） ---
