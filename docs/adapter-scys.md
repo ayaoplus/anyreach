@@ -67,7 +67,7 @@
 
 **重要**：正文只取 `.content-container`，不取 `.content-mt`（后者包含评论区）。
 
-**飞书内容自动跟进**：如果正文中包含飞书 wiki/docx 链接，自动打开新 tab 调用 feishu adapter 提取完整内容，合并到 `feishuContent` 字段。仅处理 `/wiki/` 和 `/docx/` 路径，飞书表格（sheets）、多维表格（base）等静默跳过。飞书提取失败不影响主结果。
+**外部链接**：`externalLinks` 字段包含正文中的飞书等外部 URL。适配器只提取 scys 页面数据，**不自动跟进外部链接**——调用方根据 `externalLinks` 自行决定是否提取飞书内容（通过 feishu adapter）。
 
 ### 风向标列表（opportunity）
 
@@ -133,8 +133,8 @@ node scripts/crawler.mjs --urls /tmp/essence-urls.txt --mode user --output /tmp/
 | 类型 | 特征 | 处理方式 |
 |------|------|---------|
 | 站内内容 | `articleLink` 有值，正文在 scys.com | `_extractArticle` 提取 `.content-container` |
-| 飞书内容 | `externalLinks` 含飞书 URL | 自动跟进飞书 wiki/docx，合并到 `feishuContent` |
-| 混合型 | 两者都有 | scys 正文 + 飞书完整内容同时返回 |
+| 飞书内容 | `externalLinks` 含飞书 URL | 适配器只返回链接，调用方用 feishu adapter 单独提取 |
+| 混合型 | 两者都有 | scys 返回正文 + externalLinks，调用方自行决定是否跟进飞书 |
 
 ## 修改指南
 
