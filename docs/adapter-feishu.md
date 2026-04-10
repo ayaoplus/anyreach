@@ -17,35 +17,60 @@
 
 因此，DOM 路径不可行，必须走数据层。
 
+### 数据结构
+
+```
+window.DATA.clientVars.data
+  ├── block_map          所有 block 的 id → data 映射
+  ├── block_sequence     顶层 block 的渲染顺序数组
+  ├── has_more           是否有后续 slice 未加载（boolean）
+  ├── next_cursors       后续 slice 的 cursor 数组
+  └── id                 文档 token（用于 API 调用）
+```
+
+每个 block 有 `children` 数组定义嵌套结构。`blocksToMarkdown()` 从 root block（`block_sequence[0]`）开始递归遍历 children 树，生成 Markdown。
+
 ## 长文档分 slice 加载
 
-飞书对长文档做分片加载（初始 HTML 嵌入第一个 slice，约 239 个 block）：
+飞书对长文档做分片加载。初始 HTML 嵌入第一个 slice（约 200-250 个 block）。
 
 ```
-window.DATA.clientVars.data.has_more = true   → 有后续 slice
-window.DATA.clientVars.data.has_more = false   → 数据完整
+has_more = false  → 数据完整，直接提取
+has_more = true   → 需要 fetch 后续 slice
 ```
 
-### 后续 slice 的获取路径
+### 后续 slice 获取（page-level fetch 方案）
+
+当 `has_more` 为 true 时，适配器直接在**页面上下文**中调用飞书内部 API 获取剩余 block：
 
 ```
-页面加载 → docxClientvarFetchManager 创建 Web Worker
-         → Worker 请求 /space/api/docx/pages/client_vars?cursor=xxx
-         → 数据存在 Worker 内存中，不回写 window.DATA
+GET /space/api/docx/pages/client_vars?id={docId}&mode=7&limit=500&cursor={cursor}
 ```
 
-适配器的解决方案：
+返回 JSON 结构和 `window.DATA.clientVars.data` 相同，包含 `block_map`、`has_more`、`next_cursors`。适配器循环 fetch 直到 `has_more` 为 false，合并所有 `block_map`。
 
-1. 通过 CDP `Target.setAutoAttach` + `waitForDebuggerOnStart` 捕获 Worker session
-2. CDP proxy 自动在 Worker 上启用 `Network.enable` 后恢复执行
-3. 刷新页面触发 Worker 重新创建和数据加载
-4. 通过 Worker 的 `performance.getEntriesByType("resource")` 获取 API URL
-5. 在 Worker 内 `Runtime.evaluate` 重新 fetch 获取完整 block 数据
-6. 合并到主线程的 block_map
+**为什么不用 Worker 拦截？** 之前的方案通过 CDP `autoAttach` 捕获飞书的 Web Worker，从 Worker 内部读取 API URL 并重新 fetch。这个方案**不稳定**——依赖 Worker 创建时序、autoAttach 竞态、固定等待时间，在不同 Chrome 状态下随机失败。page-level fetch 直接用同一页面的 cookie 调 API，无时序依赖。
 
-关键细节：Worker 的 fetch 请求不出现在主线程的 `Network` 域事件中，必须 attach 到 Worker target 才能访问。
+### 关键注意事项
 
-## Block 类型映射
+1. **cursor 返回的 block 不一定是文章正文**——可能包含评论、分块元数据等额外内容。`blocksToMarkdown` 只遍历 root block 的后代树，不在树上的 block 会被自然忽略。这是**正确行为**，不是 bug。
+
+2. **`workerBlockCount` 字段**：输出中的 `meta.workerBlockCount` 表示 cursor fetch 获取的 block 数量（历史命名，实际已不通过 Worker 获取）。这个数字可能大于实际新增到 markdown 中的内容，因为部分 cursor block 可能已存在于初始 block_map 中，或不在 root 树上。
+
+3. **`has_more` 在结果中仍为 `true`**：这反映的是初始 `window.DATA` 的状态（fetch 前），不代表最终数据不完整。检查 `contentLength` 和实际 markdown 内容来判断完整性。
+
+## 从 scys.com 调用时的行为
+
+scys 适配器的 `_extractArticle` 检测到飞书链接时，会 `newTab` 打开飞书 URL，调用 feishu adapter 的 `extract()` 方法。注意：
+
+- 飞书 tab 是独立的（不是 iframe），`window.DATA` 正常可用
+- feishu adapter 的 `extract()` 内部会自行等待数据就绪（`WAIT_FOR_DATA_JS` 轮询 15 秒）
+- scys 调用前的 3 秒 `sleep` 是等初始页面加载，adapter 内部还有额外等待
+- 提取完成后 scys adapter 会关闭飞书 tab
+
+## Markdown 转换
+
+### Block 类型映射
 
 所有映射在代码中是确定性的，不依赖 LLM。
 
@@ -73,6 +98,10 @@ window.DATA.clientVars.data.has_more = false   → 数据完整
 | `file` | `> 📎 文件名` | 附件文件 |
 | `chat_card` | 跳过 | 群聊卡片 |
 
+### 遍历逻辑
+
+`blocksToMarkdown(allBlocks, rootId)` 从 root block 开始，递归遍历 `children` 数组。**只有 root 的后代会被渲染**——block_map 中存在但不在 root 树上的 block 会被跳过（如评论块、cursor 返回的额外元数据）。
+
 ### 加粗处理
 
 飞书使用 EtherPad Changeset 格式存储行内样式：
@@ -96,34 +125,51 @@ table block:
   header_row: true/false                           → 是否有表头行
 ```
 
-- `cell_set` 的 key 是 `rowId + colId` 拼接
-- 每个 cell 的 `block_id` 指向 `block_map` 中的 `table_cell` block
-- `table_cell` 本身没有文本，内容在其 `children` 子 block 中
-- 按 `rows_id × columns_id` 顺序遍历，生成标准 Markdown 表格
+按 `rows_id × columns_id` 顺序遍历，生成标准 Markdown 表格。
 
 ### 图片 URL 转换
 
-block 中存储的是 image token，需要转换为 CDN URL：
+block 中存储的是 image token，转换为 CDN URL：
 
 ```
 token: "R5TJbwHZwold3dxfoN2c34m8ntf"
 → https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/v2/cover/{token}/?fallback_source=1&height=1280&mount_node_token={blockId}&mount_point=docx_image
 ```
 
-注意：此 URL 需要飞书登录态 cookie 才能访问，在 Obsidian 等工具中无法直接显示。
+注意：此 URL 需要飞书登录态 cookie 才能访问。
+
+## 输出格式
+
+```json
+{
+  "title": "文档标题",
+  "markdown": "# 标题\n\n正文...",
+  "content": "# 标题\n\n正文...",
+  "format": "markdown",
+  "meta": {
+    "blockCount": 378,
+    "workerBlockCount": 139,
+    "hasMore": true
+  },
+  "images": ["url1", "url2"],
+  "contentLength": 18724
+}
+```
+
+`markdown` 和 `content` 是同一个值（兼容不同调用方的字段名约定）。
 
 ## 不支持的内容
 
 | 类型 | 原因 |
 |---|---|
-| 嵌入电子表格（sheet） | canvas 渲染 + protobuf 数据格式，无法从 DOM 或 block 数据中提取 |
-| 多维表格（base_refer） | 独立数据源，需要单独的 API 调用 |
-| 行内部分加粗/颜色 | EtherPad Changeset 解析复杂度高，暂未实现 |
-| 图片本地化 | CDN URL 需要 cookie，下载需要通过 CDP proxy 代理 |
+| 嵌入电子表格（sheet） | canvas 渲染 + protobuf 数据格式 |
+| 多维表格（base_refer） | 独立数据源，需要单独 API |
+| 行内部分加粗/颜色 | EtherPad Changeset 解析复杂度高 |
+| 图片本地化 | CDN URL 需要 cookie |
 
 ## 修改指南
 
 - **新增 block 类型**：在 `blocksToMarkdown()` 的 `switch` 中添加 `case`
-- **修改样式映射**：直接改对应 `case` 中的 Markdown 输出格式
-- **容器类 block**（有 children 的）：注意用 `return` 跳过通用的 children 递归，避免重复输出
+- **容器类 block**（有 children）：注意用 `return` 跳过通用的 children 递归，避免重复输出
+- **长文档调试**：检查 `meta.blockCount`（总 block 数）和 `meta.workerBlockCount`（cursor fetch 数），但 markdown 长度取决于有多少 block 在 root 树上
 - **测试**：`node scripts/adapter-runner.mjs run "飞书URL"` 直接查看 JSON 输出
