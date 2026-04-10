@@ -67,7 +67,18 @@
 
 **重要**：正文只取 `.content-container`，不取 `.content-mt`（后者包含评论区）。
 
-**外部链接**：`externalLinks` 字段包含正文中的飞书等外部 URL。适配器只提取 scys 页面数据，**不自动跟进外部链接**——调用方根据 `externalLinks` 自行决定是否提取飞书内容（通过 feishu adapter）。
+**输出字段**：
+
+| 字段 | 内容 | 用途 |
+|------|------|------|
+| `markdown` | 按 DOM 顺序生成，含标题层级（`##`/`###`）和内联 `![图片](url)` | 生成文档，图片位置还原 |
+| `text` | 纯文本（innerText） | 文本分析、搜索索引 |
+| `imgs` | 图片 URL 数组 | 批量下载图片 |
+| `externalLinks` | 正文中的飞书等外部 URL | 调用方自行决定是否跟进提取 |
+| `tags` | 标签列表 | 分类 |
+| `interactionCounts` | 锚点、点赞、评论、收藏 | 数据分析 |
+
+适配器只提取 scys 页面数据，**不自动跟进外部链接**——调用方根据 `externalLinks` 自行决定是否提取飞书内容（通过 feishu adapter）。
 
 ### 风向标列表（opportunity）
 
