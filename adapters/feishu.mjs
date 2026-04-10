@@ -417,13 +417,21 @@ export default {
           workerBlockCount = Object.keys(moreBlocks).length;
           allBlocks = { ...allBlocks, ...moreBlocks };
 
-          // 修补父 block 的 children 数组：cursor 返回的新 block 有 parent_id，
-          // 但父 block 的 children 可能不包含新 block ID（飞书分 slice 时 children 可能被截断）
+          // 修补 block 树：cursor 返回的新 block 有 parent_id，需要接入遍历树
+          // 情况 1：父 block 存在但 children 不包含新 block ID → 追加到父 children
+          // 情况 2：父 block 不存在（飞书分 slice 导致中间层 block 缺失）→ 挂到 root 下
+          const rootBlock = allBlocks[rootId];
           for (const [blockId, block] of Object.entries(moreBlocks)) {
             const parentId = block.data?.parent_id;
             if (parentId && allBlocks[parentId]?.data?.children) {
+              // 情况 1：父存在，补 children
               if (!allBlocks[parentId].data.children.includes(blockId)) {
                 allBlocks[parentId].data.children.push(blockId);
+              }
+            } else if (parentId && !allBlocks[parentId] && rootBlock?.data?.children) {
+              // 情况 2：父不存在，挂到 root（丢失嵌套层级但不丢失内容）
+              if (!rootBlock.data.children.includes(blockId)) {
+                rootBlock.data.children.push(blockId);
               }
             }
           }
