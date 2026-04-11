@@ -1,6 +1,6 @@
 # 蝉妈妈适配器（chanmama.mjs）
 
-蝉妈妈（chanmama.com）达人库筛选与达人数据提取。支持条件组合筛选、保存条件加载、结果列表提取和自动翻页。
+蝉妈妈（chanmama.com）达人库筛选与达人数据提取。支持条件组合筛选、保存条件加载、结果列表提取（含详情页 URL）、自动翻页、达人详情页简介提取（自动展开长文本）。
 
 **登录要求**：达人库需要登录态，必须使用 user mode（直连用户 Chrome）。
 
@@ -9,7 +9,7 @@
 | URL 模式 | pageType | 说明 |
 |---|---|---|
 | `/bloggerRank` | `bloggerRank` | 达人库（筛选 + 列表） |
-| `/blogger/:id` | `bloggerDetail` | 达人详情页（未实现） |
+| `/bloggerRank/ID.html` | `bloggerDetail` | 达人详情页（ID 为 base64 字符串） |
 
 ## Action 列表
 
@@ -25,6 +25,7 @@
 | `nextPage` | 翻到下一页 | — |
 | `gotoPage` | 跳转指定页码 | `page: number` |
 | `search` | 点击搜索按钮 | — |
+| `extractBio` | 提取达人简介（详情页） | — |
 
 ## 筛选条件（applyFilters）
 
@@ -124,6 +125,54 @@ const result = await adapter.extract(proxy, targetId, { action: 'extractAll', ma
 ```
 
 **注意**：输出字段取决于用户的"列表配置"。上述字段在直播相关配置下出现。切换为默认配置时会有 `sales`、`videoSales`、`likeRatio`、`newFollowers` 等字段。适配器按表头名动态映射，无需修改代码。
+
+**`profileLink` 字段**：即达人详情页的 URL，格式为 `https://www.chanmama.com/bloggerRank/ID.html`。可直接用于导航到详情页提取更多数据。
+
+## 达人详情页（extractBio）
+
+提取达人简介，自动处理长文本展开。
+
+```javascript
+// 在详情页上提取简介
+const result = await adapter.extract(proxy, targetId, {
+  action: 'extractBio',
+  pageType: 'bloggerDetail',  // adapter-runner 自动设置
+});
+```
+
+返回值：
+
+```json
+{
+  "action": "extractBio",
+  "bio": "达人的完整简介文本，支持多行",
+  "wasTruncated": true,
+  "wasExpanded": true
+}
+```
+
+### DOM 结构
+
+```
+.personal-intro-row
+  span.fs12.c666.mr6          → "达人简介" 标签
+  .intro-content
+    span.intro-text.fs12.c333 → 简介正文（CSS -webkit-line-clamp:2 截断）
+    span.more-link.fs12       → "复制" 或 "展开"
+```
+
+### 展开逻辑
+
+简介默认被 CSS `-webkit-line-clamp: 2` 截断为两行。Vue 组件通过 `isMore`/`noMore` 控制展开状态：
+- `noMore = true`：文本不超过 2 行，无需展开
+- `noMore = false` 且 `isMore = false`：文本被截断，显示"展开"按钮
+- `noMore = false` 且 `isMore = true`：文本已展开
+
+适配器处理策略：
+1. 检测 `scrollHeight > clientHeight` 判断是否有截断
+2. 如果有截断，先尝试点击"展开"按钮
+3. 兜底方案：直接移除 CSS `-webkit-line-clamp` 限制，确保读取到完整文本
+4. 提取完成后恢复 CSS 样式
 
 ## 技术要点
 

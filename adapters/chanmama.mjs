@@ -1,11 +1,13 @@
 // AnyReach 蝉妈妈适配器 - chanmama.com
 // 支持页面类型：
 //   - bloggerRank: 达人库（筛选 + 列表）
+//   - bloggerDetail: 达人详情页（/bloggerRank/ID.html）
 //
 // 核心功能模块：
 //   - applyFilters: 组合筛选条件并搜索
 //   - applySavedCondition: 加载已保存的常用条件
-//   - extractResults: 提取达人列表数据
+//   - extractResults: 提取达人列表数据（含 detailUrl）
+//   - extractBio: 提取达人简介（详情页，自动展开长文本）
 //   - nextPage / gotoPage: 翻页
 //
 // DOM 结构要点 (Vue + Element UI)：
@@ -171,29 +173,46 @@ const GET_FILTER_STATE_JS = `(() => {
 export default {
   name: 'chanmama',
   domains: ['chanmama.com'],
-  description: '蝉妈妈 — 达人库筛选、达人列表提取',
+  description: '蝉妈妈 — 达人库筛选、达人列表提取、达人详情页简介提取',
 
   detect(url) {
+    // 详情页: /bloggerRank/ID.html（ID 为 base64 字符串）
+    // 必须先匹配详情页，否则会被 bloggerRank 列表页规则截获
+    if (/\/bloggerRank\/[A-Za-z0-9_-]+\.html/i.test(url)) return 'bloggerDetail';
     if (/bloggerRank/i.test(url)) return 'bloggerRank';
-    if (/\/blogger\/\d+/i.test(url)) return 'bloggerDetail';
     return 'default';
   },
 
   /**
    * 主入口 — 根据 ctx.action 分发
-   * 支持的 action:
+   * bloggerRank (列表页) 支持的 action:
    *   - 'applyFilters': 设置筛选条件并搜索 (ctx.filters)
    *   - 'applySavedCondition': 加载保存的条件 (ctx.conditionName)
-   *   - 'extractResults': 提取当前页达人列表
+   *   - 'extractResults': 提取当前页达人列表（含 detailUrl）
    *   - 'extractAll': 提取所有页（带翻页）
    *   - 'getFilterState': 获取当前筛选状态
    *   - 'nextPage': 翻到下一页
    *   - 'gotoPage': 跳转指定页 (ctx.page)
    *   - 'search': 点击搜索按钮
+   * bloggerDetail (详情页) 支持的 action:
+   *   - 'extractBio': 提取达人简介（自动展开长文本）
    */
   async extract(proxy, targetId, ctx) {
     const action = ctx.action || 'extractResults';
+    const pageType = ctx.pageType || 'bloggerRank';
 
+    // 详情页 action
+    if (pageType === 'bloggerDetail') {
+      switch (action) {
+        case 'extractBio':
+          return await this._extractBio(proxy, targetId);
+        default:
+          // 详情页默认提取简介
+          return await this._extractBio(proxy, targetId);
+      }
+    }
+
+    // 列表页 action
     switch (action) {
       case 'applyFilters':
         return await this._applyFilters(proxy, targetId, ctx.filters || {});
@@ -629,5 +648,138 @@ export default {
   async _getFilterState(proxy, targetId) {
     const state = await proxy.eval(targetId, GET_FILTER_STATE_JS);
     return { action: 'getFilterState', state };
+  },
+
+  // =====================================================================
+  // 达人详情页 — 简介提取
+  // =====================================================================
+
+  /**
+   * 提取达人简介，自动处理长文本展开
+   * DOM 结构:
+   *   .personal-intro-row
+   *     span.fs12.c666.mr6  → "达人简介" 标签
+   *     .intro-content
+   *       span.intro-text.fs12.c333  → 简介正文（CSS -webkit-line-clamp:2 截断）
+   *       span.more-link.fs12        → "复制" 或 "展开"
+   * Vue 数据:
+   *   isMore: false → 未展开, true → 已展开
+   *   noMore: true → 文本无溢出, false → 文本有溢出需展开
+   */
+  async _extractBio(proxy, targetId) {
+    // 等待详情页加载完成
+    const ready = await this._waitForDetailReady(proxy, targetId);
+    if (!ready) return { action: 'extractBio', error: 'detail page not loaded' };
+
+    // 检查是否有溢出文本需要展开
+    const expandState = await proxy.eval(targetId, `
+      (() => {
+        const row = document.querySelector('.personal-intro-row');
+        if (!row) return { hasRow: false };
+
+        const introText = row.querySelector('.intro-text');
+        if (!introText) return { hasRow: true, hasText: false };
+
+        // 检查 CSS 截断状态
+        const isTruncated = introText.scrollHeight > introText.clientHeight;
+
+        // 检查 Vue 组件的展开状态
+        let el = row;
+        while (el && !el.__vue__) el = el.parentElement;
+        const vm = el?.__vue__;
+        const isMore = vm?.$data?.isMore ?? false;
+        const noMore = vm?.$data?.noMore ?? true;
+
+        // 在 intro-content 中查找"展开"按钮
+        const introContent = row.querySelector('.intro-content');
+        const spans = introContent?.querySelectorAll('span') || [];
+        let expandBtn = null;
+        for (const s of spans) {
+          const t = s.textContent?.trim();
+          if (t === '展开' || t === '查看更多') {
+            expandBtn = t;
+            break;
+          }
+        }
+
+        return { hasRow: true, hasText: true, isTruncated, isMore, noMore, expandBtn };
+      })()
+    `);
+
+    // 如果文本被截断且未展开，尝试点击展开
+    if (expandState?.isTruncated && !expandState?.isMore) {
+      // 方式1: 点击展开按钮
+      if (expandState.expandBtn) {
+        const found = await proxy.eval(targetId, `
+          (() => {
+            document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+            const content = document.querySelector('.personal-intro-row .intro-content');
+            const spans = content?.querySelectorAll('span') || [];
+            for (const s of spans) {
+              const t = s.textContent?.trim();
+              if (t === '展开' || t === '查看更多') {
+                s.id = '__chanmama_tmp'; return true;
+              }
+            }
+            return false;
+          })()
+        `);
+        if (found) {
+          await proxy.clickAt(targetId, TMP_SEL);
+          await sleep(500);
+        }
+      }
+
+      // 方式2: 直接移除 CSS 截断（兜底，确保能拿到完整文本）
+      await proxy.eval(targetId, `
+        (() => {
+          const introText = document.querySelector('.personal-intro-row .intro-text');
+          if (introText) {
+            introText.style.webkitLineClamp = 'unset';
+            introText.style.overflow = 'visible';
+          }
+        })()
+      `);
+      await sleep(200);
+    }
+
+    // 提取完整简介文本
+    const bio = await proxy.eval(targetId, `
+      (() => {
+        const introText = document.querySelector('.personal-intro-row .intro-text');
+        return introText?.textContent?.trim() || '';
+      })()
+    `);
+
+    // 恢复 CSS 截断（避免影响页面显示）
+    await proxy.eval(targetId, `
+      (() => {
+        const introText = document.querySelector('.personal-intro-row .intro-text');
+        if (introText) {
+          introText.style.webkitLineClamp = '';
+          introText.style.overflow = '';
+        }
+      })()
+    `);
+
+    return {
+      action: 'extractBio',
+      bio: bio || '',
+      wasTruncated: expandState?.isTruncated || false,
+      wasExpanded: expandState?.isTruncated && !expandState?.isMore,
+    };
+  },
+
+  /** 等待详情页核心 DOM 加载完成 */
+  async _waitForDetailReady(proxy, targetId, timeout = 10000) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const ready = await proxy.eval(targetId, `
+        !!document.querySelector('.personal-intro-row .intro-text')
+      `);
+      if (ready) return true;
+      await sleep(500);
+    }
+    return false;
   },
 };
