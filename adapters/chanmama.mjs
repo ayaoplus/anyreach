@@ -69,20 +69,33 @@ const EXTRACT_RESULTS_JS = `(() => {
     const avatar = infoCell.querySelector('.img-box img')?.src || '';
     const hasLevel = !!infoCell.querySelector('img[alt="带货等级"]');
 
+    // 动态读取表头，按表头名映射字段
+    const headers = document.querySelectorAll('.search-result thead th');
+    const headerMap = {};
+    headers.forEach((th, i) => {
+      headerMap[th.textContent.replace(/[↑↓▲▼♦◆]/g, '').trim()] = i;
+    });
+    const col = (name) => cells[headerMap[name]]?.textContent?.trim() || '';
+
     return {
       name,
       douyinId,
       hasLevel,
       avatar,
       profileLink,
-      followers: cells[1]?.textContent?.trim() || '',
-      newFollowers: cells[2]?.textContent?.trim() || '',
-      sales: cells[3]?.textContent?.trim() || '',
-      likeRatio: cells[4]?.textContent?.trim() || '',
-      videoSales: cells[5]?.textContent?.trim() || '',
-      liveSessions: cells[6]?.textContent?.trim() || '',
-      avgOnline: cells[7]?.textContent?.trim() || '',
-      liveSales: cells[8]?.textContent?.trim() || '',
+      followers: col('粉丝数'),
+      liveSessions: col('直播场次'),
+      avgViews: col('平均场观'),
+      avgStayTime: col('平均停留时长'),
+      avgOnline: col('平均在线人数'),
+      liveSales: col('直播销售额'),
+      liveHourlyOutput: col('直播小时产出'),
+      avgSessionSales: col('场均销售额'),
+      // 以下字段在其他列配置中可能出现
+      newFollowers: col('新增粉丝'),
+      sales: col('销售额'),
+      videoSales: col('视频销售额'),
+      likeRatio: col('平均赞粉比'),
     };
   }).filter(Boolean);
 })()`;
