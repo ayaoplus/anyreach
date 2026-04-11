@@ -411,16 +411,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     // POST /clickAt?target=xxx - CDP 真实鼠标点击
+    // 先激活 tab（后台 tab 的 Input 事件不生效），再发 mousePressed/mouseReleased
     else if (pathname === '/clickAt') {
       const sid = await ensureSession(q.target);
       const selector = await readBody(req);
       if (!selector) { res.statusCode = 400; res.end(JSON.stringify({ error: '需要 CSS 选择器' })); return; }
+      // 激活 tab — CDP Input 事件仅在前台 tab 生效
+      await sendCDP('Target.activateTarget', { targetId: q.target }).catch(() => {});
       const coord = await evalJS(sid, `(() => {
         const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) return { error: '未找到元素: ' + ${JSON.stringify(selector)} };
-        el.scrollIntoView({ block: 'center' });
         const r = el.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2, tag: el.tagName, text: (el.textContent || '').slice(0, 100) };
+        const inViewport = r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
+        if (!inViewport) {
+          el.scrollIntoView({ block: 'center' });
+        }
+        const r2 = el.getBoundingClientRect();
+        return { x: r2.x + r2.width / 2, y: r2.y + r2.height / 2, tag: el.tagName, text: (el.textContent || '').slice(0, 100) };
       })()`);
       if (!coord || coord.error) { res.statusCode = 400; res.end(JSON.stringify(coord)); return; }
       await sendCDP('Input.dispatchMouseEvent', { type: 'mousePressed', x: coord.x, y: coord.y, button: 'left', clickCount: 1 }, sid);

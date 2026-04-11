@@ -45,17 +45,18 @@ const markTarget = (selector, text, extra = '') => `
 
 const TMP_SEL = '#__chanmama_tmp';
 
-/** 等待页面加载完成（loading mask 消失） */
+/** 等待页面加载完成（筛选区域 DOM 渲染完毕） */
 async function waitForReady(proxy, targetId, timeout = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeout) {
-    const loading = await proxy.eval(targetId, `
+    const ready = await proxy.eval(targetId, `
       (() => {
-        const mask = document.querySelector('.el-loading-mask');
-        return !!(mask && mask.offsetHeight > 0);
+        const box = document.querySelector('.condition-box.pl20');
+        const spans = box?.querySelectorAll('.flex-flow-row-wrap span');
+        return !!(spans && spans.length > 5);
       })()
     `);
-    if (!loading) return true;
+    if (ready) return true;
     await sleep(500);
   }
   return false;
@@ -235,23 +236,52 @@ export default {
   async _applyFilters(proxy, targetId, filters) {
     const results = [];
 
-    // 0. 等待页面加载完成（loading mask 消失）
+    // 0. 等待页面加载完成 + 点击搜索框激活页面交互
+    //    后台 tab 的首次 CDP 鼠标事件不触发 Vue 响应，需要先激活
     await waitForReady(proxy, targetId);
+    await proxy.eval(targetId, `
+      (() => {
+        document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+        const input = document.querySelector('input[placeholder*="达人"]');
+        if (input) { input.id = '__chanmama_tmp'; return true; }
+        return false;
+      })()
+    `);
+    await proxy.clickAt(targetId, TMP_SEL);
+    await sleep(300);
 
     // 1. 带货分类 — 一级 + 可选二级
+    //    注意：每个分类是 <span><span class="el-tooltip item">文字</span></span>
+    //    必须点击外层 span（wrapper.children），内层 el-tooltip 不触发 Vue 事件
     if (filters.category) {
       // 先点"全部"重置，再点目标分类（否则 popover 不会弹出）
       if (filters.subCategory) {
-        const resetFound = await proxy.eval(targetId,
-          markTarget('.condition-box.pl20 .condition-item:first-child .flex-flow-row-wrap span', '全部')
-        );
+        const resetFound = await proxy.eval(targetId, `
+          (() => {
+            document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+            const wrapper = document.querySelector('.condition-box.pl20 .condition-item:first-child .flex-flow-row-wrap');
+            if (!wrapper) return false;
+            for (const s of wrapper.children) {
+              if (s.textContent.trim() === '全部') { s.id = '__chanmama_tmp'; return true; }
+            }
+            return false;
+          })()
+        `);
         if (resetFound) await proxy.clickAt(targetId, TMP_SEL);
         await sleep(300);
       }
 
-      const found = await proxy.eval(targetId,
-        markTarget('.condition-box.pl20 .condition-item:first-child .flex-flow-row-wrap span', filters.category)
-      );
+      const found = await proxy.eval(targetId, `
+        (() => {
+          document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+          const wrapper = document.querySelector('.condition-box.pl20 .condition-item:first-child .flex-flow-row-wrap');
+          if (!wrapper) return false;
+          for (const s of wrapper.children) {
+            if (s.textContent.trim() === '${filters.category}') { s.id = '__chanmama_tmp'; return true; }
+          }
+          return false;
+        })()
+      `);
       if (found) {
         const r = await proxy.clickAt(targetId, TMP_SEL);
         results.push({ step: 'category', value: filters.category, ok: r.clicked });
