@@ -203,6 +203,7 @@ export default {
 | **xiaohongshu** | xiaohongshu.com, xhslink.com | 笔记（图文/视频）、用户主页、信息流。滚动加载、批量提取。 |
 | [**x**](docs/adapter-x.md) | x.com, twitter.com | 首页 timeline、搜索 timeline、用户主页 timeline、列表 timeline、普通推文、长文章。搜索支持内部分页抓取，适合 `limit: 100` 这类大批量推文分析；视频通过 CDP 网络事件恢复 `video.twimg.com` HLS 地址，文章输出 Markdown。 |
 | [**scys**](docs/adapter-scys.md) | scys.com | 精华帖列表（Pinia store 提取 articleLink，分页 + 断点续传）、帖子详情（排除评论，自动跟进飞书 wiki/docx）、风向标、航海项目、航海手册。支持全量爬取管线。 |
+| [**chanmama**](docs/adapter-chanmama.md) | chanmama.com | 达人库筛选（带货分类/二级分类、达人画像、粉丝画像、带货等级、带货方式、直播小时产出等条件组合）、保存条件加载、达人列表提取（动态表头映射）、自动翻页。 |
 
 ---
 
