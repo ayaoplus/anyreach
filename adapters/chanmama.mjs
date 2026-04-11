@@ -214,6 +214,7 @@ export default {
    *   - checkDaren {boolean} 勾选达人号
    *   - levels {string[]} 带货等级 ["LV1","LV2","LV3","LV4"]
    *   - sellMode {string} 带货方式："直播带货为主"|"视频带货为主"|"图文带货为主"
+   *   - liveHourlyOutput {string} 直播场均小时产出："1000-1万"|"<1000"|"1万-10万"|...
    */
   async _applyFilters(proxy, targetId, filters) {
     const results = [];
@@ -344,7 +345,74 @@ export default {
       await sleep(300);
     }
 
-    // 7. 点击搜索
+    // 7. 直播场均小时产出 — 打开"直播表现"面板，点下拉框，选值，确定
+    if (filters.liveHourlyOutput) {
+      // 打开直播表现面板
+      const panelFound = await proxy.eval(targetId, markTarget('.input-box', '直播表现'));
+      if (panelFound) await proxy.clickAt(targetId, TMP_SEL);
+      await sleep(800);
+
+      // 点击第2个 custom-select-box（小时产出的下拉框）
+      const selFound = await proxy.eval(targetId, `
+        (() => {
+          document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+          const pops = document.querySelectorAll('.el-popover');
+          for (const pop of pops) {
+            if (pop.style.display === 'none' || !pop.offsetHeight) continue;
+            if (!pop.textContent.includes('小时产出')) continue;
+            const selects = pop.querySelectorAll('.custom-select-box');
+            if (selects[1]) { selects[1].id = '__chanmama_tmp'; return true; }
+          }
+          return false;
+        })()
+      `);
+      if (selFound) await proxy.clickAt(targetId, TMP_SEL);
+      await sleep(500);
+
+      // 在展开的下拉中选择目标值
+      const itemFound = await proxy.eval(targetId, `
+        (() => {
+          document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+          const all = document.querySelectorAll('div.item, span');
+          for (const el of all) {
+            if (el.textContent.trim() === '${filters.liveHourlyOutput}' && el.offsetHeight > 0 && el.children.length === 0) {
+              el.id = '__chanmama_tmp'; return true;
+            }
+          }
+          return false;
+        })()
+      `);
+      if (itemFound) {
+        const r = await proxy.clickAt(targetId, TMP_SEL);
+        results.push({ step: 'liveHourlyOutput', value: filters.liveHourlyOutput, ok: r.clicked });
+      } else {
+        results.push({ step: 'liveHourlyOutput', value: filters.liveHourlyOutput, ok: false });
+      }
+      await sleep(300);
+
+      // 点击面板的"确定"按钮
+      const confirmFound = await proxy.eval(targetId, `
+        (() => {
+          document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+          const pops = document.querySelectorAll('.el-popover');
+          for (const pop of pops) {
+            if (pop.style.display === 'none' || !pop.offsetHeight) continue;
+            if (!pop.textContent.includes('小时产出')) continue;
+            const els = pop.querySelectorAll('span, div');
+            for (const el of els) {
+              if (el.textContent.trim() === '确定' && el.offsetHeight > 0 && el.children.length === 0) {
+                el.id = '__chanmama_tmp'; return true;
+              }
+            }
+          }
+          return false;
+        })()
+      `);
+      if (confirmFound) await proxy.clickAt(targetId, TMP_SEL);
+      await sleep(300);
+    }
+
+    // 8. 点击搜索
     await this._clickSearch(proxy, targetId);
     await sleep(2000);
 
