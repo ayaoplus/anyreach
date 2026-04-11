@@ -9,7 +9,7 @@
 //   - nextPage / gotoPage: 翻页
 //
 // DOM 结构要点 (Vue + Element UI)：
-//   - 筛选区: .search-menu > .condition-box > .condition-item (5 rows)
+//   - 筛选区: .search-menu > .condition-box.pl20 > .condition-item (5 rows)
 //     row0: 带货分类 — span.item (click toggle, .active = selected)
 //     row1: 达人分类 — .category-item (click toggle, .able = selected)
 //     row2: 达人信息 — 包含达人画像(el-radio)/粉丝画像(el-radio)/粉丝数(select)/checkboxes
@@ -24,32 +24,26 @@
 
 import { sleep } from './_utils.mjs';
 
-// --- helper: 点击包含指定文本的元素 ---
-const clickByText = (selector, text) => `
+// --- 核心交互 helper ---
+// 蝉妈妈使用 Vue + Element UI，JS .click() 无法触发 Vue 事件绑定，
+// 必须通过 CDP Input.dispatchMouseEvent（即 proxy.clickAt）进行真实鼠标点击。
+// 策略：eval 设置临时 id → clickAt 用 #id 选择器点击。
+
+/** 设置临时 id 到匹配的元素上，返回是否找到 */
+const markTarget = (selector, text, extra = '') => `
 (() => {
+  document.getElementById('__chanmama_tmp')?.removeAttribute('id');
   const els = document.querySelectorAll('${selector}');
   for (const el of els) {
-    if (el.textContent.trim() === '${text}') { el.click(); return true; }
-  }
-  return false;
-})()`;
-
-// --- helper: 选中 el-checkbox by label text ---
-const clickCheckbox = (containerIdx, label, shouldCheck = true) => `
-(() => {
-  const container = document.querySelectorAll('.condition-box > .condition-item')[${containerIdx}];
-  if (!container) return false;
-  const cbs = container.querySelectorAll('.el-checkbox');
-  for (const cb of cbs) {
-    const lbl = cb.querySelector('.el-checkbox__label')?.textContent?.trim();
-    if (lbl === '${label}') {
-      const checked = cb.classList.contains('is-checked');
-      if (checked !== ${shouldCheck}) cb.click();
-      return true;
+    if (el.textContent.trim() === '${text}' && el.offsetHeight > 0) {
+      ${extra}
+      el.id = '__chanmama_tmp'; return true;
     }
   }
   return false;
 })()`;
+
+const TMP_SEL = '#__chanmama_tmp';
 
 // --- JS: 提取达人列表 ---
 const EXTRACT_RESULTS_JS = `(() => {
@@ -114,7 +108,7 @@ const GET_PAGINATION_JS = `(() => {
 
 // --- JS: 获取当前筛选状态 ---
 const GET_FILTER_STATE_JS = `(() => {
-  const rows = document.querySelectorAll('.condition-box > .condition-item');
+  const rows = document.querySelectorAll('.condition-box.pl20 > .condition-item');
   const state = {};
 
   // row0: 带货分类
@@ -211,6 +205,7 @@ export default {
 
   /**
    * 设置筛选条件并点击搜索
+   * 所有交互使用 CDP 真实鼠标点击（clickAt），因为 Vue 事件绑定不响应 JS .click()
    * @param {Object} filters - 筛选条件:
    *   - category {string} 带货分类一级（如 "日用百货"）
    *   - subCategory {string} 带货分类二级（如 "个人护理"）
@@ -219,202 +214,139 @@ export default {
    *   - checkDaren {boolean} 勾选达人号
    *   - levels {string[]} 带货等级 ["LV1","LV2","LV3","LV4"]
    *   - sellMode {string} 带货方式："直播带货为主"|"视频带货为主"|"图文带货为主"
-   *   - liveHourlyOutput {string} 直播场均小时产出范围（需展开"直播表现"）
    */
   async _applyFilters(proxy, targetId, filters) {
     const results = [];
 
-    // 1. 带货分类 — 一级
+    // 1. 带货分类 — 一级 + 可选二级
     if (filters.category) {
-      const clicked = await proxy.eval(targetId,
-        clickByText('.condition-box > .condition-item:first-child .flex-flow-row-wrap span', filters.category)
-      );
-      results.push({ step: 'category', value: filters.category, ok: clicked });
-
-      // 二级分类 — 需要等 popover 弹出
+      // 先点"全部"重置，再点目标分类（否则 popover 不会弹出）
       if (filters.subCategory) {
-        await sleep(500);
-        // 二级分类面板是 popover，找到并点击
-        const subClicked = await proxy.eval(targetId, `
+        const resetFound = await proxy.eval(targetId,
+          markTarget('.condition-box.pl20 .condition-item:first-child .flex-flow-row-wrap span', '全部')
+        );
+        if (resetFound) await proxy.clickAt(targetId, TMP_SEL);
+        await sleep(300);
+      }
+
+      const found = await proxy.eval(targetId,
+        markTarget('.condition-box.pl20 .condition-item:first-child .flex-flow-row-wrap span', filters.category)
+      );
+      if (found) {
+        const r = await proxy.clickAt(targetId, TMP_SEL);
+        results.push({ step: 'category', value: filters.category, ok: r.clicked });
+      } else {
+        results.push({ step: 'category', value: filters.category, ok: false });
+      }
+
+      // 二级分类 — 一级点击后 popover 自动弹出
+      if (filters.subCategory) {
+        await sleep(300);
+        const subFound = await proxy.eval(targetId, `
           (() => {
-            // popover 在 document.body 末尾，找最后出现的分类面板
-            const popovers = document.querySelectorAll('.author-thread-category-popover, .el-popover');
-            for (const pop of popovers) {
-              if (pop.style.display === 'none') continue;
-              const items = pop.querySelectorAll('.category-item, span, div');
-              for (const item of items) {
-                if (item.textContent.trim() === '${filters.subCategory}') {
-                  item.click();
-                  return true;
+            document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+            const els = document.querySelectorAll('*');
+            for (const el of els) {
+              if (el.textContent.trim() === '${filters.subCategory}' &&
+                  el.offsetHeight > 0 && el.children.length <= 1) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  el.id = '__chanmama_tmp'; return true;
                 }
               }
             }
             return false;
           })()
         `);
-        results.push({ step: 'subCategory', value: filters.subCategory, ok: subClicked });
+        if (subFound) {
+          const r = await proxy.clickAt(targetId, TMP_SEL);
+          results.push({ step: 'subCategory', value: filters.subCategory, ok: r.clicked });
+        } else {
+          results.push({ step: 'subCategory', value: filters.subCategory, ok: false });
+        }
+        await sleep(500);
+        // 点击空白关闭三级分类弹窗
+        await proxy.eval(targetId, `document.querySelector('.condition-box.pl20 .lab')?.click()`);
         await sleep(300);
       }
     }
 
-    // 2. 达人画像 — 性别 (row2, section 0)
+    // 2. 达人画像 — 先点开面板，再选 radio
     if (filters.bloggerGender) {
-      const r = await proxy.eval(targetId, `
-        (() => {
-          const sec = document.querySelectorAll('.condition-box > .condition-item')[2]?.children[1]?.children[0];
-          if (!sec) return false;
-          const radios = sec.querySelectorAll('.el-radio');
-          for (const r of radios) {
-            if (r.querySelector('.el-radio__label')?.textContent?.trim() === '${filters.bloggerGender}') {
-              r.click(); return true;
-            }
-          }
-          return false;
-        })()
-      `);
-      results.push({ step: 'bloggerGender', value: filters.bloggerGender, ok: r });
-    }
-
-    // 3. 粉丝画像 — 性别 (row2, section 1)
-    if (filters.fanGender) {
-      const r = await proxy.eval(targetId, `
-        (() => {
-          const sec = document.querySelectorAll('.condition-box > .condition-item')[2]?.children[1]?.children[1];
-          if (!sec) return false;
-          const radios = sec.querySelectorAll('.el-radio');
-          for (const r of radios) {
-            if (r.querySelector('.el-radio__label')?.textContent?.trim() === '${filters.fanGender}') {
-              r.click(); return true;
-            }
-          }
-          return false;
-        })()
-      `);
-      results.push({ step: 'fanGender', value: filters.fanGender, ok: r });
-    }
-
-    // 4. 达人号 checkbox (row2)
-    if (filters.checkDaren) {
-      const r = await proxy.eval(targetId, clickCheckbox(2, '达人号', true));
-      results.push({ step: 'checkDaren', ok: r });
-    }
-
-    // 5. 带货等级 — multi-select dropdown (row3, section 0)
-    if (filters.levels && filters.levels.length > 0) {
-      // 先点击 select 打开下拉
-      const r = await proxy.eval(targetId, `
-        (() => {
-          const sec = document.querySelectorAll('.condition-box > .condition-item')[3]?.children[1]?.children[0];
-          if (!sec) return false;
-          const select = sec.querySelector('.common-search-multiple-select, .common-search-select');
-          if (select) { select.click(); return true; }
-          return false;
-        })()
-      `);
-      results.push({ step: 'openLevelSelect', ok: r });
+      const panelFound = await proxy.eval(targetId, markTarget('.input-box', '达人画像'));
+      if (panelFound) await proxy.clickAt(targetId, TMP_SEL);
       await sleep(500);
 
-      // 在弹出的 popover 中选择等级
-      for (const level of filters.levels) {
-        const lr = await proxy.eval(targetId, `
-          (() => {
-            // popover 在 body 末尾
-            const pops = document.querySelectorAll('.common-search-multiple-select-popover, .el-popover');
-            for (const pop of pops) {
-              if (pop.style.display === 'none' || !pop.offsetHeight) continue;
-              const items = pop.querySelectorAll('.item, span, li, .el-checkbox');
-              for (const item of items) {
-                const text = item.textContent.trim();
-                if (text === '${level}') {
-                  item.click(); return true;
-                }
-              }
+      const ok = await this._clickPopoverItem(proxy, targetId, '.el-popover', filters.bloggerGender);
+      results.push({ step: 'bloggerGender', value: filters.bloggerGender, ok });
+      await sleep(300);
+    }
+
+    // 3. 粉丝画像 — 先点开面板，再选 radio
+    if (filters.fanGender) {
+      const panelFound = await proxy.eval(targetId, markTarget('.input-box', '粉丝画像'));
+      if (panelFound) await proxy.clickAt(targetId, TMP_SEL);
+      await sleep(500);
+
+      const ok = await this._clickPopoverItem(proxy, targetId, '.el-popover', filters.fanGender);
+      results.push({ step: 'fanGender', value: filters.fanGender, ok });
+      await sleep(300);
+    }
+
+    // 4. 达人号 checkbox
+    if (filters.checkDaren) {
+      const found = await proxy.eval(targetId, `
+        (() => {
+          document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+          const cbs = document.querySelectorAll('.condition-box.pl20 .el-checkbox');
+          for (const cb of cbs) {
+            if (cb.querySelector('.el-checkbox__label')?.textContent?.trim() === '达人号') {
+              if (!cb.classList.contains('is-checked')) { cb.id = '__chanmama_tmp'; return true; }
+              return 'already_checked';
             }
-            return false;
-          })()
-        `);
-        results.push({ step: 'level', value: level, ok: lr });
+          }
+          return false;
+        })()
+      `);
+      if (found === true) {
+        const r = await proxy.clickAt(targetId, TMP_SEL);
+        results.push({ step: 'checkDaren', ok: r.clicked });
+      } else {
+        results.push({ step: 'checkDaren', ok: found === 'already_checked' });
+      }
+      await sleep(300);
+    }
+
+    // 5. 带货等级 — 打开面板，逐个点选
+    if (filters.levels && filters.levels.length > 0) {
+      const panelFound = await proxy.eval(targetId, markTarget('.input-box', '带货等级'));
+      if (panelFound) await proxy.clickAt(targetId, TMP_SEL);
+      await sleep(500);
+
+      for (const level of filters.levels) {
+        const ok = await this._clickPopoverItem(proxy, targetId, '.common-search-multiple-select-popover', level);
+        results.push({ step: 'level', value: level, ok });
         await sleep(200);
       }
-
-      // 关闭下拉：点击其他区域
-      await proxy.eval(targetId, `document.querySelector('.condition-box .lab')?.click()`);
+      // 关闭 popover
+      await proxy.eval(targetId, `document.querySelector('.condition-box.pl20 .lab')?.click()`);
       await sleep(300);
     }
 
-    // 6. 带货方式 (row3, section 1)
+    // 6. 带货方式 — 打开面板，选择选项
     if (filters.sellMode) {
-      const r = await proxy.eval(targetId, `
-        (() => {
-          const sec = document.querySelectorAll('.condition-box > .condition-item')[3]?.children[1]?.children[1];
-          if (!sec) return false;
-          const select = sec.querySelector('.common-search-select');
-          if (select) { select.click(); return true; }
-          return false;
-        })()
-      `);
-      results.push({ step: 'openSellModeSelect', ok: r });
+      const panelFound = await proxy.eval(targetId, markTarget('.input-box', '带货方式'));
+      if (panelFound) await proxy.clickAt(targetId, TMP_SEL);
       await sleep(500);
 
-      const sr = await proxy.eval(targetId, `
-        (() => {
-          const pops = document.querySelectorAll('.common-search-select-popover, .el-popover');
-          for (const pop of pops) {
-            if (pop.style.display === 'none' || !pop.offsetHeight) continue;
-            const items = pop.querySelectorAll('.item, span, li');
-            for (const item of items) {
-              if (item.textContent.trim() === '${filters.sellMode}') {
-                item.click(); return true;
-              }
-            }
-          }
-          return false;
-        })()
-      `);
-      results.push({ step: 'sellMode', value: filters.sellMode, ok: sr });
+      const ok = await this._clickPopoverItem(proxy, targetId, '.common-search-select-popover', filters.sellMode);
+      results.push({ step: 'sellMode', value: filters.sellMode, ok });
       await sleep(300);
     }
 
-    // 7. 直播场均小时产出 — 需要先展开"直播表现"再选择
-    if (filters.liveHourlyOutput) {
-      // 点击"直播表现"展开
-      const expandR = await proxy.eval(targetId, `
-        (() => {
-          const items = document.querySelectorAll('.condition-box .input-box');
-          for (const item of items) {
-            if (item.textContent.trim().includes('直播表现')) {
-              item.click(); return true;
-            }
-          }
-          return false;
-        })()
-      `);
-      results.push({ step: 'expandLivePerf', ok: expandR });
-      await sleep(500);
-
-      // 在展开的面板中找到"直播场均小时产出"并设置
-      const lr = await proxy.eval(targetId, `
-        (() => {
-          const pops = document.querySelectorAll('.el-popover, [class*=popover]');
-          for (const pop of pops) {
-            if (pop.style.display === 'none' || !pop.offsetHeight) continue;
-            const text = pop.textContent;
-            if (text.includes('场均小时产出') || text.includes('小时产出')) {
-              // 找到对应的 select 并选择
-              const selects = pop.querySelectorAll('.common-search-select, select');
-              // 需要具体的交互逻辑 — 取决于该下拉的 DOM 结构
-              return { found: true, hasSelects: selects.length };
-            }
-          }
-          return { found: false };
-        })()
-      `);
-      results.push({ step: 'liveHourlyOutput', value: filters.liveHourlyOutput, detail: lr });
-    }
-
-    // 8. 点击搜索
+    // 7. 点击搜索
     await this._clickSearch(proxy, targetId);
-    await sleep(1500);
+    await sleep(2000);
 
     return { action: 'applyFilters', steps: results };
   },
@@ -429,22 +361,21 @@ export default {
   async _applySavedCondition(proxy, targetId, name) {
     if (!name) return { error: 'conditionName is required' };
 
-    const r = await proxy.eval(targetId, `
+    const found = await proxy.eval(targetId, `
       (() => {
+        document.getElementById('__chanmama_tmp')?.removeAttribute('id');
         const items = document.querySelectorAll('.save-condition-item');
         for (const item of items) {
           const text = item.textContent.replace('重命名', '').replace('删除', '').trim();
-          if (text === '${name}') {
-            item.click();
-            return true;
-          }
+          if (text === '${name}') { item.id = '__chanmama_tmp'; return true; }
         }
         return false;
       })()
     `);
 
-    if (!r) return { error: `saved condition "${name}" not found` };
+    if (!found) return { error: `saved condition "${name}" not found` };
 
+    await proxy.clickAt(targetId, TMP_SEL);
     await sleep(1500);
     return { action: 'applySavedCondition', name, ok: true };
   },
@@ -520,19 +451,45 @@ export default {
   // =====================================================================
 
   async _clickSearch(proxy, targetId) {
-    // 搜索按钮是 .search-icon 所在的 el-button
-    const r = await proxy.eval(targetId, `
+    const found = await proxy.eval(targetId, `
       (() => {
-        const icon = document.querySelector('.search-icon');
-        if (!icon) return false;
-        // 向上找到 button 祖先
-        const btn = icon.closest('.el-button') || icon.parentElement;
-        if (btn) { btn.click(); return true; }
-        icon.click();
-        return true;
+        document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+        const btn = document.querySelector('.search-icon')?.closest('.el-button');
+        if (btn) { btn.id = '__chanmama_tmp'; return true; }
+        return false;
       })()
     `);
-    return { action: 'search', ok: r };
+    if (!found) return { action: 'search', ok: false };
+    const r = await proxy.clickAt(targetId, TMP_SEL);
+    return { action: 'search', ok: r.clicked };
+  },
+
+  // =====================================================================
+  // popover 内元素点击（通用）
+  // =====================================================================
+
+  /** 在可见的 popover 中找到匹配文本的元素并 clickAt */
+  async _clickPopoverItem(proxy, targetId, popoverSelector, text) {
+    const found = await proxy.eval(targetId, `
+      (() => {
+        document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+        const pops = document.querySelectorAll('${popoverSelector}');
+        for (const pop of pops) {
+          if (pop.style.display === 'none' || !pop.offsetHeight) continue;
+          const candidates = pop.querySelectorAll('.item, .el-radio, span');
+          for (const el of candidates) {
+            const t = el.querySelector('.el-radio__label')?.textContent?.trim() || el.textContent?.trim();
+            if (t === '${text}' && el.offsetHeight > 0) {
+              el.id = '__chanmama_tmp'; return true;
+            }
+          }
+        }
+        return false;
+      })()
+    `);
+    if (!found) return false;
+    const r = await proxy.clickAt(targetId, TMP_SEL);
+    return r.clicked || false;
   },
 
   // =====================================================================
