@@ -45,6 +45,22 @@ const markTarget = (selector, text, extra = '') => `
 
 const TMP_SEL = '#__chanmama_tmp';
 
+/** 等待页面加载完成（loading mask 消失） */
+async function waitForReady(proxy, targetId, timeout = 15000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const loading = await proxy.eval(targetId, `
+      (() => {
+        const mask = document.querySelector('.el-loading-mask');
+        return !!(mask && mask.offsetHeight > 0);
+      })()
+    `);
+    if (!loading) return true;
+    await sleep(500);
+  }
+  return false;
+}
+
 // --- JS: 提取达人列表 ---
 const EXTRACT_RESULTS_JS = `(() => {
   const rows = document.querySelectorAll('.search-result tbody tr');
@@ -219,6 +235,9 @@ export default {
   async _applyFilters(proxy, targetId, filters) {
     const results = [];
 
+    // 0. 等待页面加载完成（loading mask 消失）
+    await waitForReady(proxy, targetId);
+
     // 1. 带货分类 — 一级 + 可选二级
     if (filters.category) {
       // 先点"全部"重置，再点目标分类（否则 popover 不会弹出）
@@ -272,7 +291,7 @@ export default {
       }
     }
 
-    // 2. 达人画像 — 先点开面板，再选 radio
+    // 2. 达人画像 — 打开面板，选 radio，点确定
     if (filters.bloggerGender) {
       const panelFound = await proxy.eval(targetId, markTarget('.input-box', '达人画像'));
       if (panelFound) await proxy.clickAt(targetId, TMP_SEL);
@@ -281,9 +300,11 @@ export default {
       const ok = await this._clickPopoverItem(proxy, targetId, '.el-popover', filters.bloggerGender);
       results.push({ step: 'bloggerGender', value: filters.bloggerGender, ok });
       await sleep(300);
+      await this._clickPopoverConfirm(proxy, targetId);
+      await sleep(300);
     }
 
-    // 3. 粉丝画像 — 先点开面板，再选 radio
+    // 3. 粉丝画像 — 打开面板，选 radio，点确定
     if (filters.fanGender) {
       const panelFound = await proxy.eval(targetId, markTarget('.input-box', '粉丝画像'));
       if (panelFound) await proxy.clickAt(targetId, TMP_SEL);
@@ -291,6 +312,8 @@ export default {
 
       const ok = await this._clickPopoverItem(proxy, targetId, '.el-popover', filters.fanGender);
       results.push({ step: 'fanGender', value: filters.fanGender, ok });
+      await sleep(300);
+      await this._clickPopoverConfirm(proxy, targetId);
       await sleep(300);
     }
 
@@ -391,24 +414,7 @@ export default {
       await sleep(300);
 
       // 点击面板的"确定"按钮
-      const confirmFound = await proxy.eval(targetId, `
-        (() => {
-          document.getElementById('__chanmama_tmp')?.removeAttribute('id');
-          const pops = document.querySelectorAll('.el-popover');
-          for (const pop of pops) {
-            if (pop.style.display === 'none' || !pop.offsetHeight) continue;
-            if (!pop.textContent.includes('小时产出')) continue;
-            const els = pop.querySelectorAll('span, div');
-            for (const el of els) {
-              if (el.textContent.trim() === '确定' && el.offsetHeight > 0 && el.children.length === 0) {
-                el.id = '__chanmama_tmp'; return true;
-              }
-            }
-          }
-          return false;
-        })()
-      `);
-      if (confirmFound) await proxy.clickAt(targetId, TMP_SEL);
+      await this._clickPopoverConfirm(proxy, targetId);
       await sleep(300);
     }
 
@@ -558,6 +564,32 @@ export default {
     if (!found) return false;
     const r = await proxy.clickAt(targetId, TMP_SEL);
     return r.clicked || false;
+  },
+
+  // =====================================================================
+  // popover 确定按钮（通用）
+  // =====================================================================
+
+  /** 点击当前可见 popover 中的"确定"按钮 */
+  async _clickPopoverConfirm(proxy, targetId) {
+    const found = await proxy.eval(targetId, `
+      (() => {
+        document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+        const pops = document.querySelectorAll('.el-popover');
+        for (const pop of pops) {
+          if (pop.style.display === 'none' || !pop.offsetHeight) continue;
+          const els = pop.querySelectorAll('span, div, button');
+          for (const el of els) {
+            if (el.textContent.trim() === '确定' && el.offsetHeight > 0 && el.children.length === 0) {
+              el.id = '__chanmama_tmp'; return true;
+            }
+          }
+        }
+        return false;
+      })()
+    `);
+    if (found) await proxy.clickAt(targetId, TMP_SEL);
+    return found;
   },
 
   // =====================================================================
