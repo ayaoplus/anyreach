@@ -480,27 +480,70 @@ export default {
 
   /**
    * 点击已保存的常用条件（如"阿周"）
+   * 注意：DOM 中 .save-condition-item 可能存在多个同名节点（展示 + 交互），
+   * 需要定位到可见且可交互的那个，并点击其内部的名称文本元素（而非容器）。
+   * Vue 事件绑定在特定子元素上，点击容器不一定触发。
    */
   async _applySavedCondition(proxy, targetId, name) {
     if (!name) return { error: 'conditionName is required' };
 
+    // 先激活页面交互（后台 tab 首次 CDP 鼠标事件不触发 Vue 响应）
+    await proxy.eval(targetId, `
+      (() => {
+        document.getElementById('__chanmama_tmp')?.removeAttribute('id');
+        const input = document.querySelector('input[placeholder*="达人"]');
+        if (input) { input.id = '__chanmama_tmp'; return true; }
+        return false;
+      })()
+    `);
+    await proxy.clickAt(targetId, TMP_SEL);
+    await sleep(300);
+
+    // 查找匹配的保存条件：优先可见 + 可交互节点，点击名称文本而非容器
     const found = await proxy.eval(targetId, `
       (() => {
         document.getElementById('__chanmama_tmp')?.removeAttribute('id');
-        const items = document.querySelectorAll('.save-condition-item');
+        const container = document.querySelector('.common-save-conditions');
+        if (!container) return 'no_container';
+        const items = container.querySelectorAll('.save-condition-item');
         for (const item of items) {
+          if (!item.offsetHeight || item.offsetHeight <= 0) continue;
           const text = item.textContent.replace('重命名', '').replace('删除', '').trim();
-          if (text === '${name}') { item.id = '__chanmama_tmp'; return true; }
+          if (text !== '${name}') continue;
+          // 优先点击内部的名称 span（跳过"重命名"/"删除"按钮），
+          // 找不到则点击 item 自身
+          const spans = item.querySelectorAll('span, div, a, p');
+          let target = null;
+          for (const s of spans) {
+            const st = s.textContent?.trim();
+            if (st === '${name}' && s.offsetHeight > 0 && s.children.length <= 1) {
+              target = s; break;
+            }
+          }
+          (target || item).id = '__chanmama_tmp';
+          return true;
         }
         return false;
       })()
     `);
 
+    if (found === 'no_container') return { error: 'saved conditions panel not found (.common-save-conditions)' };
     if (!found) return { error: `saved condition "${name}" not found` };
 
     await proxy.clickAt(targetId, TMP_SEL);
-    await sleep(1500);
-    return { action: 'applySavedCondition', name, ok: true };
+    await sleep(2000);
+
+    // 验证：点击后筛选条件应该发生变化（URL hash 或 DOM 状态）
+    const verified = await proxy.eval(targetId, `
+      (() => {
+        // 检查搜索结果区是否有 loading 或已有数据
+        const loading = document.querySelector('.el-loading-mask');
+        const rows = document.querySelectorAll('.search-result tbody tr');
+        return { loading: !!loading, resultCount: rows.length };
+      })()
+    `);
+
+    return { action: 'applySavedCondition', name, ok: true, verified };
   },
 
   // =====================================================================
