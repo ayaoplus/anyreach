@@ -63,26 +63,50 @@ const OPEN_SHOP_DROPDOWN = `(() => {
   return true;
 })()`;
 
-// 读取已展开的下拉选项列表
-const READ_DROPDOWN_OPTIONS = `(() => {
+// 读取下拉中当前已渲染的选项（虚拟滚动下只有可视区内的 DOM 存在）
+// 返回 [{ id, name }]，id 是 option 的 DOM id（即店铺 ID，全局唯一）
+const READ_VISIBLE_OPTIONS = `(() => {
   for (const dd of document.querySelectorAll('.mr-select-dropdown')) {
     if (dd.classList.contains('mr-select-dropdown-hidden')) continue;
-    return Array.from(dd.querySelectorAll('.mr-select-item-option')).map((opt, i) => ({
-      name: opt.innerText?.trim(),
-      index: i,
+    return Array.from(dd.querySelectorAll('.mr-select-item-option')).map(opt => ({
+      id: opt.id,
+      name: opt.getAttribute('title') || opt.innerText?.trim(),
     }));
   }
   return [];
 })()`;
 
-// 点击已展开下拉中的第 N 个选项
-const clickDropdownOption = (idx) => `(() => {
+// 滚动下拉的 rc-virtual-list-holder 到指定位置
+const scrollDropdown = (top) => `(() => {
   for (const dd of document.querySelectorAll('.mr-select-dropdown')) {
     if (dd.classList.contains('mr-select-dropdown-hidden')) continue;
-    const opt = dd.querySelectorAll('.mr-select-item-option')[${idx}];
-    if (opt) { opt.click(); return opt.innerText?.trim(); }
+    const holder = dd.querySelector('.rc-virtual-list-holder');
+    if (holder) { holder.scrollTop = ${top}; return holder.scrollHeight; }
+  }
+  return 0;
+})()`;
+
+// 点击已展开下拉中指定 id 的选项（需要该选项已在可视区内）
+// id 以数字开头不能用 CSS #id 选择器，遍历匹配
+const clickDropdownById = (id) => `(() => {
+  for (const dd of document.querySelectorAll('.mr-select-dropdown')) {
+    if (dd.classList.contains('mr-select-dropdown-hidden')) continue;
+    for (const o of dd.querySelectorAll('.mr-select-item-option')) {
+      if (o.id === '${id}') { o.click(); return o.getAttribute('title') || o.innerText?.trim(); }
+    }
   }
   return null;
+})()`;
+
+// 检查指定 id 的选项是否已在 DOM 中
+const isOptionVisible = (id) => `(() => {
+  for (const dd of document.querySelectorAll('.mr-select-dropdown')) {
+    if (dd.classList.contains('mr-select-dropdown-hidden')) continue;
+    for (const o of dd.querySelectorAll('.mr-select-item-option')) {
+      if (o.id === '${id}') return true;
+    }
+  }
+  return false;
 })()`;
 
 // 提取当前页面的营收报表数据（三张表 + 摘要）
@@ -209,21 +233,83 @@ export default {
     await sleep(500);
   },
 
-  // 获取所有店铺列表（打开下拉 → 读取 → 关闭下拉）
+  // 获取所有店铺列表（打开下拉 → 滚动虚拟列表收集全部 → 关闭下拉）
+  // 返回 [{ id, name, index }]
   async getShopList(proxy, targetId) {
     await proxy.eval(targetId, OPEN_SHOP_DROPDOWN);
     await sleep(1000);
-    const shops = await proxy.eval(targetId, READ_DROPDOWN_OPTIONS);
+
+    // rc-virtual-list 只渲染可视区内的 DOM，需要滚动收集全部选项
+    const scrollHeight = await proxy.eval(targetId, scrollDropdown(0));
+    const seen = new Map(); // id → name，去重
+
+    // 先读当前位置
+    const addVisible = async () => {
+      const items = await proxy.eval(targetId, READ_VISIBLE_OPTIONS);
+      for (const item of (items || [])) {
+        if (item.id && !seen.has(item.id)) seen.set(item.id, item.name);
+      }
+    };
+
+    await addVisible();
+
+    if (scrollHeight > 0) {
+      // 获取可视区高度，按步长滚动
+      const clientHeight = await proxy.eval(targetId, `(() => {
+        for (const dd of document.querySelectorAll('.mr-select-dropdown')) {
+          if (dd.classList.contains('mr-select-dropdown-hidden')) continue;
+          return dd.querySelector('.rc-virtual-list-holder')?.clientHeight || 0;
+        }
+        return 0;
+      })()`);
+
+      if (clientHeight > 0) {
+        for (let pos = clientHeight; pos <= scrollHeight; pos += clientHeight) {
+          await proxy.eval(targetId, scrollDropdown(pos));
+          await sleep(200);
+          await addVisible();
+        }
+        // 确保滚到最底部
+        await proxy.eval(targetId, scrollDropdown(scrollHeight));
+        await sleep(200);
+        await addVisible();
+      }
+    }
+
+    // 关闭下拉
     await proxy.eval(targetId, `document.body.click()`);
     await sleep(500);
-    return shops || [];
+
+    // 转为数组，保持原始顺序（Map 保持插入顺序）
+    return Array.from(seen.entries()).map(([id, name], i) => ({ id, name, index: i }));
   },
 
-  // 选择指定索引的店铺（打开下拉 → 选中 → 关闭下拉）
-  async selectShop(proxy, targetId, shopIndex) {
+  // 选择指定店铺（打开下拉 → 滚动到目标 → 点击 → 关闭下拉）
+  // shop: getShopList 返回的 { id, name } 对象
+  async selectShop(proxy, targetId, shop) {
     await proxy.eval(targetId, OPEN_SHOP_DROPDOWN);
     await sleep(800);
-    const name = await proxy.eval(targetId, clickDropdownOption(shopIndex));
+
+    // 滚动虚拟列表直到目标选项渲染到 DOM
+    let visible = await proxy.eval(targetId, isOptionVisible(shop.id));
+    if (!visible) {
+      const clientHeight = await proxy.eval(targetId, `(() => {
+        for (const dd of document.querySelectorAll('.mr-select-dropdown')) {
+          if (dd.classList.contains('mr-select-dropdown-hidden')) continue;
+          return dd.querySelector('.rc-virtual-list-holder')?.clientHeight || 0;
+        }
+        return 0;
+      })()`);
+      const scrollHeight = await proxy.eval(targetId, scrollDropdown(0));
+
+      for (let pos = clientHeight; pos <= scrollHeight && !visible; pos += clientHeight) {
+        await proxy.eval(targetId, scrollDropdown(pos));
+        await sleep(200);
+        visible = await proxy.eval(targetId, isOptionVisible(shop.id));
+      }
+    }
+
+    const name = await proxy.eval(targetId, clickDropdownById(shop.id));
     await sleep(300);
     await proxy.eval(targetId, `document.body.click()`);
     await sleep(300);
@@ -248,10 +334,11 @@ export default {
   },
 
   // 查询单个店铺的营收数据（重置 → 选时间 → 选店铺 → 查询 → 提取）
-  async queryShopRevenue(proxy, targetId, shopIndex, timeLabel = '昨日') {
+  // shop: getShopList 返回的 { id, name } 对象
+  async queryShopRevenue(proxy, targetId, shop, timeLabel = '昨日') {
     await this.resetFilters(proxy, targetId);
     await this.selectTime(proxy, targetId, timeLabel);
-    await this.selectShop(proxy, targetId, shopIndex);
+    await this.selectShop(proxy, targetId, shop);
     await this.clickSearch(proxy, targetId);
     return this.extractRevenueData(proxy, targetId);
   },
@@ -274,9 +361,9 @@ export default {
 
     // 逐店铺查询
     const results = [];
-    for (let i = 0; i < shops.length; i++) {
-      const data = await this.queryShopRevenue(proxy, targetId, i, timeLabel);
-      results.push({ shopName: shops[i].name, shopIndex: i, ...data });
+    for (const shop of shops) {
+      const data = await this.queryShopRevenue(proxy, targetId, shop, timeLabel);
+      results.push({ shopName: shop.name, shopId: shop.id, ...data });
     }
 
     return {
