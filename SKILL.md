@@ -35,10 +35,19 @@ node "$(dirname "$0")/scripts/check-deps.mjs"
 
 ## 工具选择
 
+**访问任何 URL 前，必须先检查站点知识：**
+
+```bash
+node "<anyreach_dir>/scripts/adapter-runner.mjs" check "URL"
+```
+
+返回 `adapter` / `hint` / `remote` → **必须走 CDP Proxy**（`adapter-runner.mjs run`），不得降级到 Jina/curl/内置工具。
+返回 `none` → 按下表选择工具。
+
 | 场景 | 工具 |
 |------|------|
 | 搜索关键词、发现信息来源 | Agent 内置搜索工具（如有）或 CDP 打开搜索引擎 |
-| URL 已知，公开页面提取信息 | Agent 内置网页读取工具（如有），或 **Jina**（`r.jina.ai/example.com`，省 token），或 **curl** |
+| URL 已知，公开页面，无 adapter | Agent 内置网页读取工具（如有），或 **Jina**（`r.jina.ai/example.com`），或 **curl** |
 | 需要原始 HTML（meta、JSON-LD） | **curl** |
 | 反爬平台、需登录态、需交互操作 | **CDP Proxy** |
 
@@ -120,20 +129,14 @@ CLI `run` 命令会截获此错误，输出：
 
 ## 站点知识（四层递进）
 
-访问 URL 前，先检查是否有站点知识可用：
-
-```bash
-node "<anyreach_dir>/scripts/adapter-runner.mjs" check "URL"
-```
-
-返回四种层级：
+`check` 命令已在上方"工具选择"中要求必须执行。返回的四种层级：
 
 | level | 含义 | 操作 |
 |-------|------|------|
-| `adapter` | 本地代码适配器（.mjs） | `adapter-runner.mjs run "URL"` — 一步提取 |
+| `adapter` | 本地代码适配器（.mjs） | `adapter-runner.mjs run "URL"` — 一步提取，**必须走 CDP** |
 | `hint` | 本地经验提示（.md） | `adapter-runner.mjs hint "URL"` — 获取提示后通用 CDP |
-| `remote` | 远程有适配器可下载 | `adapter-runner.mjs run "URL"` — 自动下载后提取 |
-| `none` | 无站点知识 | 直接通用 CDP 模式 |
+| `remote` | 远程有适配器可下载 | `adapter-runner.mjs run "URL"` — 自动下载后提取，**必须走 CDP** |
+| `none` | 无站点知识 | 按工具选择表决定 |
 
 `run` 命令遇到 `remote` 时自动下载到本地，无需手动操作。
 
