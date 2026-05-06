@@ -25,6 +25,12 @@
       "description": "生财有术: articles, opportunities, courses",
       "files": ["adapters/scys.mjs"],
       "updated": "2026-04-06"
+    },
+    "zhihu": {
+      "domains": ["zhihu.com", "zhuanlan.zhihu.com"],
+      "description": "Zhihu article/answer/collection extraction with HTML→Markdown",
+      "files": ["adapters/zhihu.mjs"],
+      "updated": "2026-05-06"
     }
   },
   "shared": ["adapters/_utils.mjs"]
